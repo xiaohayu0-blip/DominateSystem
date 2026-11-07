@@ -314,38 +314,17 @@ const sections = [
 
 function AdminApp() {
   const [authenticated, setAuth] = useState(false)
-  const [checking, setChecking] = useState(true)
-  const [sessionCheck, setSessionCheck] = useState(0)
-  const [sessionError, setSessionError] = useState<unknown>(null)
   const [section, setSection] = useState('overview')
   const activeSection = section === 'history' ? 'weekly' : section
   const [drawer, setDrawer] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const [refresh, setRefresh] = useState(0)
-  useEffect(() => {
-    let active = true
-    api('/admin/me').then(() => {
-      if (active) setAuth(true)
-    }).catch(e => {
-      if (active && !(e instanceof ApiError && e.status === 401)) setSessionError(e)
-    }).finally(() => { if (active) setChecking(false) })
-    return () => { active = false }
-  }, [sessionCheck])
   async function login(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setError(null); setBusy(true)
     const data = new FormData(e.currentTarget)
     try { await api('/admin/login', 'POST', { username: data.get('username'), password: data.get('password') }); setAuth(true) } catch (e) { setError(e) } finally { setBusy(false) }
   }
-  if (checking) return <div className="empty">正在检查管理员会话…</div>
-  if (sessionError) return <main id="main-content" className="admin-login">
-    <ErrorBox error={sessionError}/>
-    <button className="secondary" onClick={() => {
-      setSessionError(null)
-      setChecking(true)
-      setSessionCheck(value => value + 1)
-    }}>重试会话检查</button>
-  </main>
   if (!authenticated) return <main id="main-content" className="admin-login"><a className="text-button" href="#/">← 返回用户网站</a><div className="brand-icon"><ShieldCheck/></div><span className="eyebrow">管理学院 · 管理员入口</span><h1>管理工作台</h1><p className="muted">独立管理员认证。普通用户手机号不具备后台权限。</p><form onSubmit={login}><Field title="管理员账号"><input name="username" required autoComplete="username"/></Field><Field title="密码"><input name="password" required type="password" autoComplete="current-password" maxLength={200}/></Field><ErrorBox error={error}/><button className="primary" disabled={busy}>{busy ? '登录中…' : '登录工作台'}<ArrowUpRight size={18}/></button></form></main>
   return <div className="admin-shell"><aside className={'admin-sidebar ' + (drawer ? 'expanded' : '')}><a className="brand" href="#/admin"><span className="brand-icon"><BookOpen size={22}/></span><span>管院制度服务<small>管理工作台</small></span></a><span className="sidebar-caption">管理导航</span><nav>{sections.map(([id, title, Icon]) => <button key={id} aria-current={activeSection === id ? 'page' : undefined} onClick={() => { setSection(id); setDrawer(false); setError(null) }}><Icon size={18}/>{title}{activeSection === id && <ChevronRight size={14}/>}</button>)}</nav><div className="sidebar-bottom"><p>完整联系方式仅限授权管理使用。</p><a href="#/">用户网站 <ArrowUpRight size={14}/></a><button className="text-button" onClick={async () => { try { await api('/admin/logout', 'POST'); setAuth(false) } catch (e) { setError(e) } }}><LogOut size={16}/>退出后台</button></div></aside><div className="admin-main"><header className="admin-top"><button className="mobile-menu" aria-label="展开管理菜单" onClick={() => setDrawer(!drawer)}><Menu/></button><span>管理学院 / {sections.find(x => x[0] === activeSection)?.[1]}</span><button className="text-button" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={15}/>刷新数据</button></header><main id="main-content" className="admin-content"><div className="page-title"><div><span className="eyebrow">管理学院制度服务</span><h1>{sections.find(x => x[0] === activeSection)?.[1]}</h1></div><span className="muted">北京时间 · 后台处理</span></div><ErrorBox error={error}/><AdminSection key={section + refresh} section={section} navigate={setSection}/></main></div></div>
 }
