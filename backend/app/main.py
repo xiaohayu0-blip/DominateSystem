@@ -320,7 +320,7 @@ def overview(actor=Depends(admin), db: DBSession = Depends(get_db)):
     from zoneinfo import ZoneInfo
     from datetime import datetime
     report = weekly(db, datetime.now(ZoneInfo("Asia/Shanghai")).date())
-    return {"weekly": report["counts"],
+    return {"weekly": report["counts"], "total_issue_groups": report["total_issue_groups"],
             "open_events": db.scalar(select(func.count()).select_from(m.EmergencyEvent).where(m.EmergencyEvent.state != "closed")),
             "mail_attention": db.scalar(select(func.count()).select_from(m.MailJob).where(
                 m.MailJob.status.in_(["failed", "unconfigured", "uncertain", "retry"]))),

@@ -299,13 +299,14 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
 }
 
 const sections = [
-  ['overview', '工作概览', LayoutDashboard], ['issues', '问题池', Inbox], ['weekly', '后台周报', CalendarDays], ['events', '紧急事件', Siren], ['knowledge', '资料维护', Files], ['people', '登记资料', Users], ['questions', '问答记录', BookOpen], ['settings', '配置状态', Settings], ['audit', '操作审计', ScrollText],
+  ['overview', '工作概览', LayoutDashboard], ['weekly', '后台周报', CalendarDays], ['events', '紧急事件', Siren], ['knowledge', '资料维护', Files], ['people', '登记资料', Users], ['questions', '问答记录', BookOpen], ['settings', '配置状态', Settings], ['audit', '操作审计', ScrollText],
 ] as const
 
 function AdminApp() {
   const [authenticated, setAuth] = useState(false)
   const [checking, setChecking] = useState(true)
   const [section, setSection] = useState('overview')
+  const activeSection = section === 'history' ? 'weekly' : section
   const [drawer, setDrawer] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
@@ -318,7 +319,7 @@ function AdminApp() {
   }
   if (checking) return <div className="empty">正在检查管理员会话…</div>
   if (!authenticated) return <main id="main-content" className="admin-login"><a className="text-button" href="#/">← 返回用户网站</a><div className="brand-icon"><ShieldCheck/></div><span className="eyebrow">管理学院 · 管理员入口</span><h1>管理工作台</h1><p className="muted">独立管理员认证。普通用户手机号不具备后台权限。</p><form onSubmit={login}><Field title="管理员账号"><input name="username" required autoComplete="username"/></Field><Field title="密码"><input name="password" required type="password" autoComplete="current-password" maxLength={200}/></Field><ErrorBox error={error}/><button className="primary" disabled={busy}>{busy ? '登录中…' : '登录工作台'}<ArrowUpRight size={18}/></button></form></main>
-  return <div className="admin-shell"><aside className={'admin-sidebar ' + (drawer ? 'expanded' : '')}><a className="brand" href="#/admin"><span className="brand-icon"><BookOpen size={22}/></span><span>管院制度服务<small>管理工作台</small></span></a><span className="sidebar-caption">管理导航</span><nav>{sections.map(([id, title, Icon]) => <button key={id} aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setDrawer(false); setError(null) }}><Icon size={18}/>{title}{section === id && <ChevronRight size={14}/>}</button>)}</nav><div className="sidebar-bottom"><p>完整联系方式仅限授权管理使用。</p><a href="#/">用户网站 <ArrowUpRight size={14}/></a><button className="text-button" onClick={async () => { try { await api('/admin/logout', 'POST'); setAuth(false) } catch (e) { setError(e) } }}><LogOut size={16}/>退出后台</button></div></aside><div className="admin-main"><header className="admin-top"><button className="mobile-menu" aria-label="展开管理菜单" onClick={() => setDrawer(!drawer)}><Menu/></button><span>管理学院 / {sections.find(x => x[0] === section)?.[1]}</span><button className="text-button" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={15}/>刷新数据</button></header><main id="main-content" className="admin-content"><div className="page-title"><div><span className="eyebrow">管理学院制度服务</span><h1>{sections.find(x => x[0] === section)?.[1]}</h1></div><span className="muted">北京时间 · 后台处理</span></div><ErrorBox error={error}/><AdminSection key={section + refresh} section={section} navigate={setSection}/></main></div></div>
+  return <div className="admin-shell"><aside className={'admin-sidebar ' + (drawer ? 'expanded' : '')}><a className="brand" href="#/admin"><span className="brand-icon"><BookOpen size={22}/></span><span>管院制度服务<small>管理工作台</small></span></a><span className="sidebar-caption">管理导航</span><nav>{sections.map(([id, title, Icon]) => <button key={id} aria-current={activeSection === id ? 'page' : undefined} onClick={() => { setSection(id); setDrawer(false); setError(null) }}><Icon size={18}/>{title}{activeSection === id && <ChevronRight size={14}/>}</button>)}</nav><div className="sidebar-bottom"><p>完整联系方式仅限授权管理使用。</p><a href="#/">用户网站 <ArrowUpRight size={14}/></a><button className="text-button" onClick={async () => { try { await api('/admin/logout', 'POST'); setAuth(false) } catch (e) { setError(e) } }}><LogOut size={16}/>退出后台</button></div></aside><div className="admin-main"><header className="admin-top"><button className="mobile-menu" aria-label="展开管理菜单" onClick={() => setDrawer(!drawer)}><Menu/></button><span>管理学院 / {sections.find(x => x[0] === activeSection)?.[1]}</span><button className="text-button" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={15}/>刷新数据</button></header><main id="main-content" className="admin-content"><div className="page-title"><div><span className="eyebrow">管理学院制度服务</span><h1>{sections.find(x => x[0] === activeSection)?.[1]}</h1></div><span className="muted">北京时间 · 后台处理</span></div><ErrorBox error={error}/><AdminSection key={section + refresh} section={section} navigate={setSection}/></main></div></div>
 }
 
 function Load<T>({ path, children }: { path: string; children: (data: T, reload: () => void) => ReactNode }) {
@@ -333,9 +334,8 @@ function Load<T>({ path, children }: { path: string; children: (data: T, reload:
 }
 
 function AdminSection({ section, navigate }: { section: string; navigate: (s: string) => void }) {
-  if (section === 'overview') return <Load<{ weekly: { new: number; backlog: number }; open_events: number; mail_attention: number; pending_questions: number; documents: number }> path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>优先查看紧急事件与通知异常，再处理制度问题。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.weekly.backlog, '跨周积压问题组', 'issues']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传资料只会生成草稿，发布后才能进入检索。补充依据后，在问题详情中复测原题，再完成处理。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
-  if (section === 'issues') return <IssuePool/>
-  if (section === 'weekly') return <WeeklyPage/>
+  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>优先查看紧急事件与通知异常，再处理制度问题。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传资料只会生成草稿，发布后才能进入检索。补充依据后，在问题详情中复测原题，再完成处理。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
+  if (section === 'weekly' || section === 'history') return <><div className="filter-bar"><button className={section === 'weekly' ? 'primary' : 'secondary'} onClick={() => navigate('weekly')}>本周新增问题组</button><button className={section === 'history' ? 'primary' : 'secondary'} onClick={() => navigate('history')}>全部历史问题组</button></div>{section === 'weekly' ? <WeeklyPage/> : <IssueHistory/>}</>
   if (section === 'knowledge') return <KnowledgePage/>
   if (section === 'events') return <EventsPage/>
   if (section === 'people') return <Load<Profile[]> path="/admin/people">{data => data.length ? <div className="record-grid">{data.map((p, i) => <section className="panel" key={p.id ?? i}><ProfileView person={p}/><small>登记编号 {p.id}</small></section>)}</div> : <Empty/>}</Load>
@@ -346,7 +346,7 @@ function AdminSection({ section, navigate }: { section: string; navigate: (s: st
 
 const reasons = ['missing_material', 'needs_clarification', 'document_conflict', 'validation_failed', 'system_error', 'out_of_scope']
 const states = ['open', 'in_progress', 'awaiting_material', 'awaiting_retest', 'completed', 'dismissed']
-function IssuePool() {
+function IssueHistory() {
   const [reason, setReason] = useState('')
   const [state, setState] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -371,7 +371,7 @@ function IssueCard({ issue, siblings, reload }: { issue: Issue; siblings: Issue[
 
 function WeeklyPage() {
   const [day, setDay] = useState('')
-  return <><div className="filter-bar"><Field title="选择历史周内任意日期"><input aria-label="周报日期" type="date" value={day} onChange={e => setDay(e.target.value)}/></Field><p className="muted">北京时间每周一 09:00 发送上周新增问题。</p></div><Load<Weekly> path={'/admin/weekly' + (day ? '?day=' + day : '')}>{(w, reload) => <><p className="week-range">{stamp(w.start)} — {stamp(w.end)}（结束时间不含）</p><p className="muted">该周邮件 · {w.mail_enabled ? (label[w.weekly_mail?.status ?? ''] ?? '尚未入批次') : '已停用'}{w.weekly_mail?.sent_at ? ' · ' + stamp(w.weekly_mail.sent_at) : ''}</p><div className="tag-row">{Object.entries(w.counts.by_reason).map(([k, n]) => <span className="tag" key={k}>{label[k]} {n}</span>)}</div><h2 className="section-label">本周新增 <span>{w.counts.new} 组</span></h2><IssueList items={w.new} reload={reload}/><h2 className="section-label">往周未完成 <span>{w.counts.backlog} 组</span></h2><IssueList items={w.backlog} reload={reload}/></>}</Load></>
+  return <><div className="filter-bar"><Field title="选择历史周内任意日期"><input aria-label="周报日期" type="date" value={day} onChange={e => setDay(e.target.value)}/></Field><p className="muted">北京时间每周一 09:00 发送上周新增问题。</p></div><Load<Weekly> path={'/admin/weekly' + (day ? '?day=' + day : '')}>{(w, reload) => <><p className="week-range">{stamp(w.start)} — {stamp(w.end)}（结束时间不含）</p><p className="muted">该周邮件 · {w.mail_enabled ? (label[w.weekly_mail?.status ?? ''] ?? '尚未入批次') : '已停用'}{w.weekly_mail?.sent_at ? ' · ' + stamp(w.weekly_mail.sent_at) : ''}</p><div className="tag-row">{Object.entries(w.counts.by_reason).map(([k, n]) => <span className="tag" key={k}>{label[k]} {n}</span>)}</div><h2 className="section-label">{day ? '所选周新增' : '本周新增'} <span>{w.counts.new} 组</span></h2><IssueList items={w.new} reload={reload}/></>}</Load></>
 }
 
 function KnowledgePage() {

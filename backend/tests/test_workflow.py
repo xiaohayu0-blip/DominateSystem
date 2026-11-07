@@ -64,6 +64,12 @@ def test_week_boundary_backlog_and_history(admin_client):
         db.commit()
         report = weekly(db, date(2026, 11, 2))
         assert report["counts"] == {"new": 0, "backlog": 1, "by_reason": {}}
+        assert report["total_issue_groups"] == 1
+        issue.state = "completed"
+        db.commit()
+        report = weekly(db, date(2026, 11, 2))
+        assert report["counts"]["backlog"] == 0
+        assert report["total_issue_groups"] == 1
         assert weekly(db, date(2026, 10, 26))["counts"]["new"] == 1
         issue.created_at = monday_start
         db.get(Question, q["id"]).created_at = monday_start

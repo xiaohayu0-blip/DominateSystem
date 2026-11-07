@@ -99,6 +99,7 @@ def weekly(db, day):
     job = db.scalar(select(MailJob).where(MailJob.week_start == local.date().isoformat()))
     from .config import settings
     return {"start": local.isoformat(), "end": local_end.isoformat(), "new": new, "backlog": backlog,
+            "total_issue_groups": len(roots),
             "counts": {"new": len(new), "backlog": len(backlog), "by_reason": groups},
             "timezone": "Asia/Shanghai", "mail_enabled": settings().weekly_mail_enabled,
             "weekly_mail": weekly_mail_data(job)}
