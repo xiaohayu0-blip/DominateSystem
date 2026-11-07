@@ -1,0 +1,51 @@
+name: dominate-system
+services:
+  db:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dominate}
+      POSTGRES_USER: ${POSTGRES_USER:-dominate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD}
+    volumes: ["database:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  migrate:
+    build: {context: .., dockerfile: deploy/backend.Dockerfile}
+    env_file: ${APP_ENV_FILE:-../.env}
+    command: ["alembic", "upgrade", "head"]
+    depends_on: {db: {condition: service_healthy}}
+  api:
+    build: {context: .., dockerfile: deploy/backend.Dockerfile}
+    restart: unless-stopped
+    env_file: ${APP_ENV_FILE:-../.env}
+    volumes: ["files:/data/files"]
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+  worker:
+    build: {context: .., dockerfile: deploy/backend.Dockerfile}
+    restart: unless-stopped
+    env_file: ${APP_ENV_FILE:-../.env}
+    command: ["python", "-m", "app.alerts"]
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    logging: *logging
+  web:
+    build: {context: .., dockerfile: deploy/web.Dockerfile}
+    restart: unless-stopped
+    ports: ["127.0.0.1:${WEB_PORT:-8080}:80"]
+    depends_on: {api: {condition: service_healthy}}
+    logging: *logging
+volumes:
+  database:
+  files:

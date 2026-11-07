@@ -1,0 +1,534 @@
+/* Shared visual treatment for the consultation site and staff workspace. */
+.user-site {
+  --surface: #fff;
+  --canvas: #f5f6fa;
+  --tint: #edf2fa;
+  --ink: #233653;
+  --line: #dce3ef;
+  --soft-shadow: 0 6px 24px #253c5e0a;
+  background: var(--canvas);
+  border-top: 0;
+}
+
+.user-site .site-header {
+  background: var(--surface);
+  border-color: #e8ecf3;
+}
+
+.user-site .brand-icon {
+  background: var(--tint);
+  border: 0;
+  border-radius: 50%;
+  color: var(--ink);
+}
+
+.user-site .public-nav a[aria-current=page]::after {
+  display: none;
+}
+
+.user-site .public-nav a[aria-current=page] {
+  background: var(--tint);
+  border-radius: 999px;
+  padding-inline: 12px;
+}
+
+.user-site .entry-card,
+.user-site .conversation {
+  background: var(--surface);
+  border: 1px solid #e6ebf3;
+  border-radius: 26px;
+  box-shadow: var(--soft-shadow);
+}
+
+.user-site .child-card,
+.user-site .citation,
+.user-site .alert-card {
+  border-radius: 18px;
+}
+
+.user-site .entry-intro .service-disclosure {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.user-site .entry-intro .service-disclosure > summary {
+  width: fit-content;
+  min-height: 44px;
+  gap: 6px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  color: #536783;
+  font-size: 12px;
+}
+
+.user-site .primary,
+.user-site .secondary {
+  border-radius: 999px;
+}
+
+.user-site .registration-form input {
+  background: #f7f9fc;
+  border-radius: 15px;
+}
+
+.registration-form input[aria-invalid=true] {
+  border-color: #bd7870;
+}
+
+.registration-form .field-error {
+  display: block;
+  margin-top: 4px;
+  color: #9b3b34;
+  font-size: 12px;
+}
+
+.user-site .account-intro .account-intro-kicker {
+  margin: 0 0 5px;
+  color: #566d91;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.account-intro-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.account-intro-topics li {
+  padding: 5px 10px;
+  border: 1px solid #dce3ef;
+  border-radius: 999px;
+  background: var(--surface);
+  color: #445775;
+  font-size: 12px;
+}
+
+.account-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.account-action {
+  min-height: 46px;
+  transition: transform 100ms ease;
+}
+
+.account-action[aria-pressed=true] {
+  outline: 1px solid #7589a9;
+  outline-offset: 2px;
+}
+
+.account-action:active {
+  transform: scale(.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-action,
+  .account-action:active {
+    transition: none;
+    transform: none;
+  }
+}
+
+.user-site .registration-form .segmented {
+  gap: 4px;
+  padding: 4px;
+  background: var(--tint);
+  border: 0;
+  border-radius: 999px;
+}
+
+.user-site .segmented button {
+  flex: 1;
+  border-radius: 999px;
+  padding: 8px 12px;
+}
+
+.user-site .segmented button[aria-pressed=true] {
+  background: var(--surface);
+  box-shadow: 0 1px 5px #253c5e15;
+  color: var(--ink);
+}
+
+.user-site .segmented button[aria-pressed=true]::after {
+  display: none;
+}
+
+.user-site .conversation-top {
+  border-color: #edf0f6;
+}
+
+.user-site .welcome-mark {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 14px;
+  border-radius: 50%;
+  background: var(--tint);
+  color: var(--ink);
+}
+
+.user-site .welcome > p {
+  margin-bottom: 22px;
+}
+
+.user-site .suggestions {
+  gap: 8px;
+  border: 0;
+}
+
+.user-site .suggestions button {
+  min-height: 44px;
+  padding: 9px 15px;
+  border: 1px solid #e6ebf3;
+  border-radius: 999px;
+  background: #f7f9fc;
+  color: var(--ink);
+}
+
+.user-site .question-bubble {
+  padding: 12px 17px;
+  border-radius: 23px 23px 8px 23px;
+  background: var(--tint);
+  color: var(--ink);
+}
+
+.user-site .exchange {
+  scroll-margin-top: 12px;
+}
+
+.user-site .citation {
+  background: #f7f9fc;
+  border-color: #e6ebf3;
+}
+
+.user-site .composer textarea {
+  border-radius: 24px;
+  background: #f7f9fc;
+  border-color: #e3e9f3;
+}
+
+.user-site .composer .send-button {
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.user-site .composer .context-fields input[type=number] {
+  border-radius: 999px;
+}
+
+.admin-login .primary,
+.admin-shell .primary,
+.admin-shell .secondary {
+  border-radius: 999px;
+}
+
+.chat-conditions-toggle {
+  display: none;
+}
+
+.landing-admin-link {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .user-site--landing {
+    display: flex;
+    height: var(--landing-height, calc(100vh - 36px));
+    flex-direction: column;
+  }
+
+  .user-site.user-site--landing .site-header {
+    padding-block: 4px;
+  }
+
+  .environment:has(+ .user-site--landing) > span:not(.demo-label):not(.mode-detail) {
+    display: none;
+  }
+
+  .user-site .entry-layout.entry-layout--landing {
+    flex: 1 0 auto;
+    justify-content: flex-end;
+    width: 100%;
+    padding-block: 14px;
+  }
+
+  .user-site--landing > footer {
+    display: none;
+  }
+
+  .user-site--landing .entry-intro {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .user-site--landing .entry-intro .service-disclosure {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .user-site--landing .entry-intro .service-disclosure > summary,
+  .user-site--landing .landing-admin-link {
+    display: flex;
+    min-height: 36px;
+    align-items: center;
+    gap: 4px;
+    color: #536783;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .user-site .entry-layout--landing .account-intro {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    margin: 0;
+    padding: 12px 12px 24px;
+  }
+
+  .user-site .entry-layout--landing .account-intro h1 {
+    font-size: clamp(25px, 7vw, 34px);
+  }
+
+  .user-site .entry-layout--landing .account-intro p:not(.account-intro-kicker) {
+    margin-top: 8px;
+    font-size: 14px;
+  }
+
+  .user-site .account-entry {
+    order: 1;
+  }
+
+  .user-site .entry-layout--landing .account-actions {
+    margin: 0 0 3px;
+  }
+
+  .user-site .exchange {
+    scroll-margin-top: 60px;
+  }
+
+  .user-site:has(.entry-layout) .site-header {
+    min-height: 0;
+    padding: 8px 14px;
+  }
+
+  .user-site:has(.entry-layout) .brand-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .user-site:has(.entry-layout) .brand-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .user-site .entry-layout {
+    min-height: 0;
+    padding: 12px 12px 20px;
+  }
+
+  .user-site .entry-layout:not(.entry-layout--landing) .account-intro {
+    display: block;
+    margin-bottom: 14px;
+    padding: 5px 4px 1px;
+  }
+
+  .user-site .account-intro h1 {
+    margin: 0 0 5px;
+    font-size: 22px;
+    line-height: 1.4;
+  }
+
+  .user-site .account-intro p {
+    max-width: 34ch;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .user-site .entry-card {
+    margin-bottom: 8px;
+    padding: 14px;
+    border-radius: 22px;
+  }
+
+  .user-site .entry-card .section-heading,
+  .user-site .registration-form .segmented {
+    margin-bottom: 10px;
+  }
+
+  .user-site .entry-card .section-heading h2 {
+    margin-bottom: 3px;
+  }
+
+  .user-site .registration-form .field {
+    margin-bottom: 10px;
+  }
+
+  .user-site .registration-form .field > label {
+    margin-bottom: 3px;
+  }
+
+  .user-site .registration-form input {
+    font-size: 16px;
+  }
+
+  .user-site .registration-form .privacy-note {
+    margin-bottom: 10px;
+  }
+
+  .admin-login {
+    margin: 12px auto;
+    padding: 16px 18px 20px;
+    border-radius: 22px;
+  }
+
+  .admin-login .brand-icon {
+    display: none;
+  }
+
+  .admin-login h1 {
+    margin-block: 4px 6px;
+  }
+
+  .admin-login form {
+    margin-top: 12px;
+  }
+
+  .admin-login .field {
+    margin-bottom: 10px;
+  }
+
+  .environment:has(+ .user-site .user-header--chat) > span:not(.demo-label):not(.mode-detail) {
+    display: none;
+  }
+
+  .user-site .user-header--chat > .site-header,
+  .user-site .user-header--chat ~ footer {
+    display: none;
+  }
+
+  .user-site .user-header--chat {
+    background: var(--surface);
+  }
+
+  .user-site .mobile-chat-profile {
+    padding: 2px 12px;
+    background: transparent;
+    border-bottom: 1px solid #e6ebf3;
+  }
+
+  .user-site .mobile-chat-profile .identity-card {
+    padding-inline: 4px;
+    border-radius: 999px;
+    background: var(--surface);
+  }
+
+  .user-site .mobile-chat-profile .identity-card .text-button {
+    min-width: 0;
+    padding-inline: 3px;
+  }
+
+  .user-site .mobile-chat-profile .identity-card .mobile-chat-logout {
+    margin-left: 0;
+  }
+
+  .user-site .chat-layout {
+    padding-inline: 12px;
+  }
+
+  .user-site .user-header--chat ~ .chat-layout {
+    padding-top: 8px;
+  }
+
+  .user-site .conversation {
+    padding-bottom: calc(var(--composer-height, 140px) + 16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .user-site .conversation-top {
+    padding: 10px 16px;
+  }
+
+  .user-site .messages {
+    padding-inline: 16px;
+  }
+
+  .user-site .welcome {
+    padding: 10px 0 18px;
+  }
+
+  .user-site .composer {
+    inset-inline: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    padding: 5px;
+    border: 1px solid #dee5ef;
+    border-radius: 28px;
+    background: var(--surface);
+    box-shadow: 0 8px 30px #243a5a20;
+  }
+
+  .user-site .composer-input-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .user-site .chat-conditions-toggle {
+    display: block;
+    flex: 0 0 auto;
+    min-height: 44px;
+    min-width: 44px;
+    padding-inline: 8px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--tint);
+    color: var(--ink);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .user-site .composer-input-row .input-shell {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .user-site .composer .input-shell textarea {
+    display: block;
+    height: 48px;
+    min-height: 48px;
+    padding: 9px 51px 9px 12px;
+  }
+
+  .user-site .composer .send-button {
+    right: 2px;
+    bottom: 2px;
+  }
+
+  .user-site .composer form > small,
+  .user-site .composer .chat-conditions:not(.is-open) {
+    display: none;
+  }
+
+  .user-site .composer .context-fields {
+    column-gap: 10px;
+    margin: 4px 8px 6px;
+  }
+
+  .user-site .composer .context-fields input[type=number] {
+    max-width: 72px;
+    min-height: 34px;
+  }
+}
