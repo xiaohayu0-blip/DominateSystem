@@ -341,7 +341,7 @@ function Load<T>({ path, children }: { path: string; children: (data: T, reload:
 }
 
 function AdminSection({ section, navigate }: { section: string; navigate: (s: string) => void }) {
-  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>点击「本周新增问题组」或「全部历史问题组」，查看对应的处理状态饼图。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传资料只会生成草稿，发布后才能进入检索。补充依据后，在问题详情中复测原题，再完成处理。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
+  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>点击「本周新增问题组」或「全部历史问题组」，查看各状态的问题组数量。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传资料只会生成草稿，发布后才能进入检索。补充依据后，在问题详情中复测原题，再完成处理。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
   if (section === 'weekly' || section === 'history') return <><div className="filter-bar"><button className={section === 'weekly' ? 'primary' : 'secondary'} onClick={() => navigate('weekly')}>本周新增问题组</button><button className={section === 'history' ? 'primary' : 'secondary'} onClick={() => navigate('history')}>全部历史问题组</button></div>{section === 'weekly' ? <WeeklyPage/> : <IssueHistory/>}</>
   if (section === 'knowledge') return <KnowledgePage/>
   if (section === 'events') return <EventsPage/>
@@ -353,33 +353,21 @@ function AdminSection({ section, navigate }: { section: string; navigate: (s: st
 const reasons = ['missing_material', 'needs_clarification', 'document_conflict', 'validation_failed', 'system_error', 'out_of_scope']
 const states = ['open', 'in_progress', 'awaiting_material', 'awaiting_retest', 'completed', 'dismissed']
 
-function IssueStatusChart({ title, items }: { title: string; items: Issue[] }) {
+function IssueStatusSummary({ title, items }: { title: string; items: Issue[] }) {
   const total = items.length
   const resolved = items.filter(item => item.state === 'completed').length
   const dismissed = items.filter(item => item.state === 'dismissed').length
   const categories = [
-    { title: '已解决', count: resolved, color: '#2e5789', start: 0 },
-    { title: '无法解决', count: dismissed, color: '#a9503f', start: resolved },
-    { title: '待解决', count: total - resolved - dismissed, color: '#bb8a35', start: resolved + dismissed },
+    { title: '已解决', count: resolved },
+    { title: '无法解决', count: dismissed },
+    { title: '待解决', count: total - resolved - dismissed },
   ]
 
-  return <section className="panel issue-status-chart">
+  return <section className="panel issue-status-summary">
     <h2>{title} <strong>{total} 组</strong></h2>
-    <div className="issue-status-chart-body">
-      <svg viewBox="0 0 100 100" aria-hidden="true">
-        <circle cx="50" cy="50" r="49" fill="#e6ebf2"/>
-        {total > 0 && categories.filter(category => category.count > 0).map(category => (
-          <circle key={category.title} cx="50" cy="50" r="24.5" fill="none"
-            stroke={category.color} strokeWidth="49" pathLength={total}
-            strokeDasharray={`${category.count} ${total - category.count}`}
-            strokeDashoffset={-category.start} transform="rotate(-90 50 50)"/>
-        ))}
-      </svg>
-      <ul>{categories.map(category => <li key={category.title}>
-        <svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill={category.color}/></svg>
-        <span>{category.title}</span><strong>{category.count}</strong>
-      </li>)}</ul>
-    </div>
+    <ul>{categories.map(category => <li key={category.title}>
+      {category.title} <strong>{category.count}</strong>
+    </li>)}</ul>
   </section>
 }
 
@@ -388,7 +376,7 @@ function IssueHistory() {
   const [state, setState] = useState('')
   const [keyword, setKeyword] = useState('')
   const [search, setSearch] = useState('')
-  return <><form className="filter-bar" onSubmit={e => { e.preventDefault(); setSearch(keyword) }}><Search size={17}/><input aria-label="搜索问题或人员" placeholder="问题、姓名或手机号" value={keyword} onChange={e => setKeyword(e.target.value)}/><select aria-label="原因筛选" value={reason} onChange={e => setReason(e.target.value)}><option value="">全部原因</option>{reasons.map(r => <option key={r} value={r}>{label[r]}</option>)}</select><select aria-label="状态筛选" value={state} onChange={e => setState(e.target.value)}><option value="">全部状态</option>{states.map(s => <option key={s} value={s}>{label[s]}</option>)}</select><button className="secondary">查询</button></form><Load<Issue[]> path={'/admin/issues?' + new URLSearchParams({ reason, state, keyword: search })}>{(items, reload) => <><IssueStatusChart title={reason || state || search ? '当前筛选结果' : '全部历史问题组'} items={items}/><IssueList items={items} reload={reload}/></>}</Load></>
+  return <><form className="filter-bar" onSubmit={e => { e.preventDefault(); setSearch(keyword) }}><Search size={17}/><input aria-label="搜索问题或人员" placeholder="问题、姓名或手机号" value={keyword} onChange={e => setKeyword(e.target.value)}/><select aria-label="原因筛选" value={reason} onChange={e => setReason(e.target.value)}><option value="">全部原因</option>{reasons.map(r => <option key={r} value={r}>{label[r]}</option>)}</select><select aria-label="状态筛选" value={state} onChange={e => setState(e.target.value)}><option value="">全部状态</option>{states.map(s => <option key={s} value={s}>{label[s]}</option>)}</select><button className="secondary">查询</button></form><Load<Issue[]> path={'/admin/issues?' + new URLSearchParams({ reason, state, keyword: search })}>{(items, reload) => <><IssueStatusSummary title={reason || state || search ? '当前筛选结果' : '全部历史问题组'} items={items}/><IssueList items={items} reload={reload}/></>}</Load></>
 }
 
 function IssueList({ items, reload }: { items: Issue[]; reload: () => void }) { return items.length ? <div className="issue-list">{items.map(i => <IssueCard key={i.id} issue={i} siblings={items} reload={reload}/>)}</div> : <Empty text="没有符合条件的问题。"/> }
@@ -408,7 +396,7 @@ function IssueCard({ issue, siblings, reload }: { issue: Issue; siblings: Issue[
 
 function WeeklyPage() {
   const [day, setDay] = useState('')
-  return <><div className="filter-bar"><Field title="选择历史周内任意日期"><input aria-label="周报日期" type="date" value={day} onChange={e => setDay(e.target.value)}/></Field><p className="muted">北京时间每周一 09:00 发送上周新增问题。</p></div><Load<Weekly> path={'/admin/weekly' + (day ? '?day=' + day : '')}>{(w, reload) => <><p className="week-range">{stamp(w.start)} — {stamp(w.end)}（结束时间不含）</p><p className="muted">该周邮件 · {w.mail_enabled ? (label[w.weekly_mail?.status ?? ''] ?? '尚未入批次') : '已停用'}{w.weekly_mail?.sent_at ? ' · ' + stamp(w.weekly_mail.sent_at) : ''}</p><div className="tag-row">{Object.entries(w.counts.by_reason).map(([k, n]) => <span className="tag" key={k}>{label[k]} {n}</span>)}</div><IssueStatusChart title={day ? '所选周新增问题组' : '本周新增问题组'} items={w.new}/><IssueList items={w.new} reload={reload}/></>}</Load></>
+  return <><div className="filter-bar"><Field title="选择历史周内任意日期"><input aria-label="周报日期" type="date" value={day} onChange={e => setDay(e.target.value)}/></Field><p className="muted">北京时间每周一 09:00 发送上周新增问题。</p></div><Load<Weekly> path={'/admin/weekly' + (day ? '?day=' + day : '')}>{(w, reload) => <><p className="week-range">{stamp(w.start)} — {stamp(w.end)}（结束时间不含）</p><p className="muted">该周邮件 · {w.mail_enabled ? (label[w.weekly_mail?.status ?? ''] ?? '尚未入批次') : '已停用'}{w.weekly_mail?.sent_at ? ' · ' + stamp(w.weekly_mail.sent_at) : ''}</p><div className="tag-row">{Object.entries(w.counts.by_reason).map(([k, n]) => <span className="tag" key={k}>{label[k]} {n}</span>)}</div><IssueStatusSummary title={day ? '所选周新增问题组' : '本周新增问题组'} items={w.new}/><IssueList items={w.new} reload={reload}/></>}</Load></>
 }
 
 function KnowledgePage() {
