@@ -52,9 +52,9 @@ def test_merge_preserves_all_people_and_weekly_no_duplicate(admin_client):
 
 def test_identical_issues_group_automatically_and_preserve_occurrences(admin_client):
     c = admin_client
-    for name, suffix in [("虚构甲", "？"), ("虚构乙", "。")]:
+    for name, suffix, year in [("虚构甲", "？", 2023), ("虚构乙", "。", 2026)]:
         signup(c, student(name=name))
-        ask(c, "校外住宿补助如何申请" + suffix, business_year=2026)
+        ask(c, "校外住宿补助如何申请" + suffix, business_year=year)
     group, = c.get("/api/admin/issues").json()
     assert group["count"] == 2
     assert c.get("/api/admin/weekly").json()["counts"]["new"] == 1
@@ -69,6 +69,9 @@ def test_identical_issues_group_automatically_and_preserve_occurrences(admin_cli
         db.commit()
     group, = c.get("/api/admin/issues").json()
     assert {o["snapshot"]["name"] for o in group["occurrences"]} == {"虚构甲", "虚构乙"}
+    assert {o["context"]["business_year"] for o in group["occurrences"]} == {2023, 2026}
+    retest = c.post(f'/api/admin/issues/{group["id"]}/retest').json()["retests"][-1]
+    assert {r["answer"]["context"]["business_year"] for r in retest["results"]} == {2023, 2026}
 
 
 def test_week_boundary_backlog_and_history(admin_client):
@@ -129,7 +132,7 @@ def test_merge_rejects_different_years_and_technical_closure(admin_client):
     c = admin_client
     signup(c, student())
     ask(c, "住宿补助", business_year=2025)
-    ask(c, "住宿补助", business_year=2026)
+    ask(c, "如何申请住宿补助", business_year=2026)
     one, two = c.get("/api/admin/issues").json()
     assert c.post(f'/api/admin/issues/{one["id"]}/merge', json={"source_ids": [two["id"]], "note": "不同年度"}).status_code == 422
     with SessionLocal() as db:

@@ -356,6 +356,10 @@ def issue_update(issue_id: str, data: IssueUpdate, actor=Depends(admin), db: DBS
     if data.state == "completed" and item.reason not in {"system_error", "out_of_scope"}:
         if not data.evidence_ids or not item.retests or not item.retests[-1]["passed"]:
             raise HTTPException(422, "完成前需要已发布依据和通过的原题复测")
+        members = set(db.scalars(select(m.Issue.id).where(m.Issue.merged_into == item.id)))
+        tested = {result["issue_id"] for result in item.retests[-1].get("results", [])}
+        if tested != members | {item.id}:
+            raise HTTPException(422, "问题组记录已变化，请重新复测后再完成")
         retest_docs = set(item.retests[-1].get("evidence_ids", []))
         if not retest_docs.intersection(data.evidence_ids):
             raise HTTPException(422, "完成依据必须与最近复测使用的资料一致")

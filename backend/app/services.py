@@ -24,12 +24,13 @@ def issue_group_key(issue_text, reason, context):
         issue_text = context.get("followup_question") or issue_text
     normalized = unicodedata.normalize("NFKC", issue_text).casefold()
     normalized = " ".join(normalized.split()).rstrip(" ?。!.,，")
-    return normalized, reason, context.get("business_year"), context.get("admission_year")
+    return normalized, reason
 
 
 def open_issue_roots():
     return select(Issue, Question.context).join(Question, Issue.question_id == Question.id).where(
         Issue.merged_into.is_(None), Issue.state.not_in(("completed", "dismissed")),
+        Issue.reason != "needs_clarification",
         Issue.question_id.not_in(select(EmergencyEvent.question_id)),
     ).order_by(Issue.created_at, Issue.id)
 
@@ -49,12 +50,15 @@ def group_existing_issues(db):
     grouped = 0
     for issue, context in db.execute(open_issue_roots()).all():
         # Preserve separately worked records and any existing manual groups.
-        if issue.state != "open" or issue.revision != 1 or issue.owner or issue.history:
+        if issue.state != "open" or issue.owner or issue.history or issue.retests or issue.evidence_ids:
             continue
         key = issue_group_key(issue.text, issue.reason, context)
         root = roots.setdefault(key, issue)
         if root.id != issue.id:
+            for child in db.scalars(select(Issue).where(Issue.merged_into == issue.id)):
+                child.merged_into = root.id
             issue.merged_into = root.id
+            root.revision += 1
             grouped += 1
     return grouped
 
@@ -83,13 +87,15 @@ def finish_question(question_id, factory=SessionLocal):
                 roots.setdefault(issue_group_key(issue.text, issue.reason, context), issue)
             for item in failed_items:
                 key = issue_group_key(item["question"], item["status"], q.context)
-                root = roots.get(key)
+                root = roots.get(key) if item["status"] != "needs_clarification" else None
                 issue = Issue(question_id=q.id, text=item["question"], reason=item["status"],
                               merged_into=root.id if root else None)
                 db.add(issue)
                 if root is None:
                     db.flush()
                     roots[key] = issue
+                else:
+                    root.revision += 1
         q.answer, q.status, q.completed_at = answer, "complete", now()
         # Clarification can only resolve within same registration + explicit previous question.
         previous = db.get(Question, q.context.get("previous_id", ""))
