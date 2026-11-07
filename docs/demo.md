@@ -2,7 +2,7 @@
 
 ## 打开网站
 
-启动方式见README。用户端 <http://localhost:5173/>，管理员后台 <http://localhost:5173/#/admin>。`localhost`仅能在当前电脑使用，不能直接发给手机。跨设备演示需单独配置可达局域网地址、监听地址与PUBLIC_ORIGIN；当前未公开监听。
+启动方式见README。用户端 <http://localhost:5173/>，管理员后台 <http://localhost:5173/#/admin>。`localhost`仅用于当前电脑。手机和电脑接入同一 Wi-Fi 后，可在项目根目录运行 `powershell -ExecutionPolicy Bypass -File scripts/start-demo.ps1 -LanAddress 10.12.88.24`，把示例 IP 换成电脑当前的 Wi-Fi IPv4 地址。手机打开脚本输出的 Website 地址。该选项仅用于演示环境，停止脚本即可关闭这次局域网入口。
 
 管理员 `demo-admin`，随机密码请在本机 `backend/runtime/demo-access.txt` 查看。不要把该文件上传到GitHub或截图公开。
 
