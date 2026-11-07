@@ -21,7 +21,7 @@ function App() {
   const [modes, setModes] = useState<Modes | null>(null)
   useEffect(() => { const change = () => setAdmin(location.hash.startsWith('#/admin')); addEventListener('hashchange', change); return () => removeEventListener('hashchange', change) }, [])
   useEffect(() => { api<Modes>('/modes').then(setModes).catch(() => setModes(null)) }, [])
-  return <><a className="skip-link" href="#main-content">跳至主要内容</a><div className="environment">{modes ? modes.environment === 'production' ? '管理学院制度信息服务' : <><span className="demo-label">演示环境</span><span>{modes.material === 'synthetic' ? '制度资料为合成样本，请勿作为实际办理依据。' : '请核对制度适用范围。'}</span><span className="mode-detail">{modes.model === 'mock' ? '模拟问答' : 'DeepSeek问答'} · {modes.mail === 'mock' ? '邮件不外发' : 'SMTP通道'}</span></> : '服务状态暂未确认，请检查网络连接。'}</div>{isAdmin ? <AdminApp/> : <UserApp/>}</>
+  return <><a className="skip-link" href="#main-content">跳至主要内容</a><div className="environment">{modes ? modes.environment === 'production' ? '管理学院制度信息服务' : <><span className="demo-label">演示环境</span><span>{modes.material === 'synthetic' ? '制度资料为合成样本，请勿作为实际办理依据。' : '请核对制度适用范围。'}</span><span className="mode-detail">{modes.model === 'mock' ? '模拟问答' : 'DeepSeek问答'}{modes.embedding?.startsWith('BAAI/') ? ' · BGE 检索' : ''} · {modes.mail === 'mock' ? '邮件不外发' : 'SMTP通道'}</span></> : '服务状态暂未确认，请检查网络连接。'}</div>{isAdmin ? <AdminApp/> : <UserApp/>}</>
 }
 
 const blankProfile = (): Profile => ({ role: 'student', name: '', phone: '', major: '', class_name: '', children: [] })

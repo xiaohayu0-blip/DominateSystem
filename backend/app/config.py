@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     demo_lan_origin: str = ""
     secure_cookies: bool = False
     model_mode: Literal["mock", "deepseek"] = "mock"
+    embedding_mode: Literal["hash", "bge"] = "hash"
+    bge_cache_dir: Path = Path("runtime/bge-cache")
     material_mode: Literal["synthetic", "official"] = "synthetic"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

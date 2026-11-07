@@ -18,7 +18,8 @@ from .alerts import HELP_TEXT, create_alert, detect_danger, retention_preview
 from .config import settings
 from .db import SessionLocal, get_db, now
 from .qa import answer_question, context_for
-from .retrieval import build_chunks
+from .embeddings import BGE_MODEL, bge_model
+from .retrieval import build_chunks, index_bge
 from .schemas import (DocumentMeta, EventUpdate, FormalReply, IssueUpdate, LoginInput, MergeInput,
                       QuestionInput, RegisterInput, SignupInput)
 from .security import (admin, audit, hash_password, issue_session, token_hash,
@@ -51,6 +52,13 @@ async def lifespan(app):
     settings().validate_runtime()
     # A crashed generation is visible as a technical failure, never erased or called missing material.
     with SessionLocal() as db:
+        if settings().embedding_mode == "bge":
+            if db.scalar(select(m.Chunk.id).join(m.Document).where(
+                m.Document.status == "published", m.Document.parse_status == "ready",
+                m.Chunk.bge_vector.is_(None),
+            ).limit(1)):
+                raise RuntimeError("请先运行 python -m app.cli bge-index，再启用 BGE 检索。")
+            bge_model()
         stale = list(db.scalars(select(m.Question).where(m.Question.status == "pending")))
         for q in stale:
             q.status = "complete"
@@ -117,7 +125,8 @@ def health(db: DBSession = Depends(get_db)):
 def modes():
     cfg = settings()
     return {"environment": cfg.environment, "model": cfg.model_mode, "material": cfg.material_mode,
-            "mail": cfg.mail_mode, "identity_verified": False}
+            "mail": cfg.mail_mode, "identity_verified": False,
+            "embedding": BGE_MODEL if cfg.embedding_mode == "bge" else "character-hash"}
 
 
 @app.post("/api/register")
@@ -497,6 +506,8 @@ def publication(document_id: str, action: str, actor=Depends(admin), db: DBSessi
     if action == "publish":
         if d.parse_status != "ready" or not chunks or not d.publisher:
             raise HTTPException(422, "发布前需要成功解析的正文和发布单位")
+        if settings().embedding_mode == "bge" and any(c.bge_vector is None for c in chunks):
+            index_bge([(c, d) for c in chunks])
         d.status = "published"
     elif action == "disable":
         d.status = "disabled"
@@ -504,6 +515,8 @@ def publication(document_id: str, action: str, actor=Depends(admin), db: DBSessi
         from .retrieval import vector
         for c in chunks:
             c.vector = vector(c.text)
+        if settings().embedding_mode == "bge":
+            index_bge([(c, d) for c in chunks])
     audit(db, actor, "document_" + action, d.id)
     db.commit()
     return document_data(db, d)
@@ -591,7 +604,8 @@ def admin_settings(actor=Depends(admin), db: DBSession = Depends(get_db)):
     return {**modes(), "model_configured": cfg.model_mode == "mock" or bool(cfg.deepseek_api_key),
             "smtp_ready": smtp_ready(), "weekly_smtp_ready": smtp_ready(weekly=True),
             "weekly_mail_enabled": cfg.weekly_mail_enabled, "real_email_authorized": cfg.allow_real_email,
-            "retriever": "keyword+character-hash-vector-v1", "ocr_enabled": cfg.ocr_enabled,
+            "retriever": f"keyword+{BGE_MODEL}" if cfg.embedding_mode == "bge" else "keyword+character-hash-vector-v1",
+            "ocr_enabled": cfg.ocr_enabled,
             "retention": "preview_only", "daily_model_limit": cfg.model_daily_limit,
             "pending_mail": db.scalar(select(func.count()).select_from(m.MailJob).where(m.MailJob.status.in_(["pending", "retry", "sending"])))}
 

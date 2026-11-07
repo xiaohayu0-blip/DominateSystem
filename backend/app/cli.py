@@ -87,9 +87,22 @@ def initialize_demo():
     print("演示数据已初始化；随机管理员密码保存在 runtime/demo-access.txt（已被.gitignore排除）。")
 
 
+def build_bge_index():
+    from .embeddings import BGE_MODEL, bge_model
+    from .models import Chunk
+    from .retrieval import index_bge
+
+    bge_model(allow_download=True)
+    with SessionLocal() as db:
+        rows = db.execute(select(Chunk, Document).join(Document).where(Document.parse_status == "ready")).all()
+        index_bge(rows, allow_download=True)
+        db.commit()
+    print(f"{BGE_MODEL}: 已索引 {len(rows)} 个资料片段")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["create-admin", "demo-init", "mail-once", "retention-preview"])
+    parser.add_argument("command", choices=["create-admin", "demo-init", "mail-once", "retention-preview", "bge-index"])
     parser.add_argument("--username", default="admin")
     args = parser.parse_args()
     if args.command == "create-admin":
@@ -98,6 +111,8 @@ def main():
         initialize_demo()
     elif args.command == "mail-once":
         print("processed" if run_one() else "idle")
+    elif args.command == "bge-index":
+        build_bge_index()
     else:
         with SessionLocal() as db:
             print(json.dumps(retention_preview(db), ensure_ascii=False, indent=2, default=str))

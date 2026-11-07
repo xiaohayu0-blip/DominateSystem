@@ -8,7 +8,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $backendRoot '.env'))) {
 }
 Push-Location $backendRoot
 try {
-    uv sync --locked
+    $bgeEnabled = $env:EMBEDDING_MODE -eq 'bge' -or (Select-String -LiteralPath '.env' -Pattern '^\s*EMBEDDING_MODE\s*=\s*bge\s*$' -Quiet)
+    if ($bgeEnabled) {
+        uv sync --locked --extra bge
+    } else {
+        uv sync --locked
+    }
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
     & '.\.venv\Scripts\python.exe' -m alembic upgrade head
     if ($LASTEXITCODE -ne 0) { throw 'Migration failed' }

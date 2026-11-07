@@ -24,6 +24,26 @@ def publish(title="奖学金办法", content="奖学金申请材料包括申请�
         return d.id
 
 
+def test_bge_indexes_new_chunks_and_reranks_within_selected_year(monkeypatch):
+    from app import retrieval
+    from app.config import settings
+
+    monkeypatch.setattr(settings(), "embedding_mode", "bge")
+    first_axis = [1.0, 0.0] + [0.0] * 510
+    second_axis = [0.0, 1.0] + [0.0] * 510
+    monkeypatch.setattr(retrieval, "embed_query", lambda text: first_axis)
+    monkeypatch.setattr(retrieval, "embed_passages", lambda passages, **kwargs: [
+        first_axis if "目标依据" in text else second_axis for text in passages
+    ])
+    other = publish("请假规则", "学生请假需要提交说明。", year=2023)
+    best = publish("请假规则", "目标依据：学生请假需要提交说明。", year=2023)
+    publish("请假规则", "目标依据：学生请假需要提交说明。", year=2024)
+    with SessionLocal() as db:
+        results, _ = retrieval.retriever.search(db, "学生请假需要提交说明", {"business_year": 2023})
+        assert [doc.id for _, doc in results] == [best, other]
+        assert all(len(chunk.bge_vector) == 512 and len(chunk.vector) == 128 for chunk, _ in results)
+
+
 def ask(client, text, **kwargs):
     data = {"request_id": uuid.uuid4().hex, "text": text, **kwargs}
     response = client.post("/api/questions", json=data)

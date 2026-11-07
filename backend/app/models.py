@@ -81,6 +81,7 @@ class Chunk(Base):
     location: Mapped[str] = mapped_column(String(200))
     text: Mapped[str] = mapped_column(Text)
     vector: Mapped[list] = mapped_column(JSON, default=list)
+    bge_vector: Mapped[list | None] = mapped_column(JSON(none_as_null=True))
 
 
 class Question(Base):

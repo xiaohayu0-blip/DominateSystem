@@ -9,6 +9,11 @@ dependencies = [
   "python-docx>=1.2,<2", "openpyxl>=3.1.5,<4", "pillow>=12,<13"
 ]
 
+[project.optional-dependencies]
+bge = [
+    "fastembed>=0.9,<1",
+]
+
 [dependency-groups]
 dev = ["pytest>=9,<10", "ruff>=0.14,<1"]
 

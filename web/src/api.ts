@@ -36,7 +36,7 @@ export type Issue = { id: string; text: string; reason: string; state: string; o
 export type Doc = { id: string; title: string; publisher: string; version: string; business_year: number | null; admission_year: number | null; effective_from: string | null; effective_to: string | null; status: string; parse_status: string; parse_note: string; confirmed_by: string; confirmed_on: string | null; basis: string; chunks: { id: string; location: string; text: string }[] }
 export type Weekly = { mail_enabled: boolean; weekly_mail: WeeklyMail | null; start: string; end: string; new: Issue[]; backlog: Issue[]; counts: { new: number; backlog: number; by_reason: Record<string, number> } }
 export type Emergency = { id: string; text: string; state: string; snapshot: Profile; history: History[]; created_at: string; mail: { id: string; mode: string; status: string; body: string; attempts: number; error_code: string; attempt_history: { at: string; result: string }[] } }
-export type Modes = { environment: string; model: string; material: string; mail: string }
+export type Modes = { environment: string; model: string; material: string; mail: string; embedding?: string }
 export const label: Record<string, string> = {
   answered: '有据可查', missing_material: '待补充资料', needs_clarification: '待澄清', document_conflict: '资料冲突',
   validation_failed: '证据校验失败', system_error: '技术故障', out_of_scope: '服务范围外',

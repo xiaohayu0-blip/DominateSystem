@@ -26,6 +26,18 @@
 
 在 `backend/.env` 把 `MODEL_MODE` 改为 `deepseek`，并填写 `DEEPSEEK_API_KEY`。默认模型为 `deepseek-flash`。保存后重启后端，在「配置状态」确认模式，再用有出处的问题验证真实请求。密钥只放在后端配置中。真实 SMTP 周报需要另行配置发件服务和 `WEEKLY_RECIPIENT`，并获得外发授权。
 
+## 本机启用 BGE
+
+在 `backend` 目录安装可选依赖、升级数据库并生成索引。
+
+```powershell
+uv sync --locked --extra bge
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m app.cli bge-index
+```
+
+首次索引会下载 BAAI/bge-small-zh-v1.5 的 ONNX 权重。之后后端用 CPU 和本地缓存推理，资料片段与查询向量都在本机生成。把 `backend/.env` 的 `EMBEDDING_MODE` 设为 `bge`，重启后端，工作台「配置状态」会显示检索模型。启用后新资料自动生成 BGE 向量，年份、年级和资料范围仍由规则筛选。部署到服务器时，在服务器安装相同依赖并生成索引，或挂载已下载的模型缓存。恢复原有检索可将模式改为 `hash` 后重启。
+
 ## 预警只做虚构演示
 
 在用户页面输入“演示用例：孩子说他不想活了”。网站及时显示求助提示，数据库先建立事件和邮件任务；worker默认约每秒检查任务，模拟状态变为“模拟已发送”。不会向任何邮箱发送。

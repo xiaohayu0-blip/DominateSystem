@@ -8,6 +8,8 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import settings
+from .embeddings import BGE_DIMENSIONS, embed_passages, embed_query
 from .models import Chunk, Document
 
 STOP = set("的了是在有与和及或请问可以如何怎么什么哪些多少时候需要我们我要了解一下")
@@ -38,15 +40,29 @@ def vector(text: str, dimensions=128) -> list[float]:
 
 def build_chunks(db: Session, document: Document, parts: list[tuple[str, str]]):
     from sqlalchemy import delete
-    db.execute(delete(Chunk).where(Chunk.document_id == document.id))
+    chunks = []
     for location, raw in parts:
         # Keep source location; overlap prevents arbitrary chunk cuts hiding nearby conditions.
         for i in range(0, len(raw), 650):
             text = raw[i:i + 800].strip()
             if text:
-                db.add(Chunk(document_id=document.id, location=f"{location} · 字符{i + 1}",
-                             text=text, vector=vector(text)))
+                chunks.append(Chunk(document_id=document.id, location=f"{location} · 字符{i + 1}",
+                                    text=text, vector=vector(text)))
+    if settings().embedding_mode == "bge":
+        index_bge([(chunk, document) for chunk in chunks])
+    db.execute(delete(Chunk).where(Chunk.document_id == document.id))
+    db.add_all(chunks)
     db.flush()
+
+
+def index_bge(rows: list[tuple[Chunk, Document]], *, allow_download: bool = False) -> None:
+    for start in range(0, len(rows), 32):
+        batch = rows[start:start + 32]
+        texts = [f"{doc.title}\n{chunk.text}" for chunk, doc in batch]
+        for (chunk, _), embedding in zip(batch, embed_passages(texts, allow_download=allow_download), strict=True):
+            if len(embedding) != BGE_DIMENSIONS:
+                raise RuntimeError("BGE 向量维度异常")
+            chunk.bge_vector = embedding
 
 
 class Retriever(Protocol):
@@ -55,7 +71,9 @@ class Retriever(Protocol):
 
 class HybridRetriever:
     def search(self, db: Session, text: str, context: dict):
-        qterms, qvector = terms(text), vector(text)
+        use_bge = settings().embedding_mode == "bge"
+        qterms = terms(text)
+        qvector = embed_query(text) if use_bge else vector(text)
         year = context["business_year"]
         # Use an explicitly chosen year for cohort-scoped evidence when no cohort was specified.
         admission = context.get("admission_year") or context.get("selected_year")
@@ -99,8 +117,12 @@ class HybridRetriever:
             # Imported tables can specify different cohorts for individual rows.
             scope = re.search(r" · 适用(20\d{2}(?:、20\d{2})*)级(及以后)? · 字符\d+$", chunk.location)
             cohorts = [int(value) for value in scope[1].split("、")] if scope else []
-            semantic = sum(a * b for a, b in zip(qvector, chunk.vector))
-            score = lexical * 0.8 + max(semantic, 0) * 0.2
+            embedding = chunk.bge_vector if use_bge else chunk.vector
+            if use_bge and (not embedding or len(embedding) != BGE_DIMENSIONS):
+                raise RuntimeError("BGE 索引不完整，请重新生成索引")
+            semantic = sum(a * b for a, b in zip(qvector, embedding))
+            bge_weight = 0.6 if use_bge else 0.2
+            score = lexical * (1 - bge_weight) + max(semantic, 0) * bge_weight
             if (doc.admission_year or cohorts) and admission is None:
                 grade_missing = True
                 if points:
