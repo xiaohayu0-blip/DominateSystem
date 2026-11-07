@@ -16,10 +16,20 @@ function Field({ title, children, hint, invalid = false }: { title: string; chil
 function HistoryList({ items }: { items: History[] }) { return <ol className="timeline">{items.map((h, i) => <li key={i}><small>{stamp(h.at)} · {h.by ?? '系统'} · {label[h.state ?? ''] ?? h.action}</small><p>{h.note}</p></li>)}</ol> }
 function ProfileView({ person }: { person: Profile }) { return <div className="profile-detail"><span className="eyebrow">{person.role === 'parent' ? '家长自报资料' : '学生自报资料'}</span><p><strong>{person.name}</strong> · {person.phone}</p>{person.role === 'student' && <p>{person.major} / {person.class_name}</p>}{person.children.map((c, i) => <div className="child-summary" key={i}><b>孩子信息 {i + 1} · {c.name}</b><p>{c.major} / {c.class_name} · {c.phone}</p><small>填写关系：{c.relationship}（未核验）</small></div>)}</div> }
 
+function isAdminRoute() {
+  return location.hash.startsWith('#/')
+    ? location.hash === '#/admin'
+    : /^\/admin\/?$/.test(location.pathname)
+}
+
 function App() {
-  const [isAdmin, setAdmin] = useState(location.hash.startsWith('#/admin'))
+  const [isAdmin, setAdmin] = useState(isAdminRoute)
   const [modes, setModes] = useState<Modes | null>(null)
-  useEffect(() => { const change = () => setAdmin(location.hash.startsWith('#/admin')); addEventListener('hashchange', change); return () => removeEventListener('hashchange', change) }, [])
+  useEffect(() => {
+    const change = () => { if (location.hash !== '#main-content') setAdmin(isAdminRoute()) }
+    addEventListener('hashchange', change)
+    return () => removeEventListener('hashchange', change)
+  }, [])
   useEffect(() => { api<Modes>('/modes').then(setModes).catch(() => setModes(null)) }, [])
   return <><a className="skip-link" href="#main-content">跳至主要内容</a><div className="environment">{modes ? modes.environment === 'production' ? '管理学院制度信息服务' : <><span className="demo-label">演示环境</span><span>{modes.material === 'synthetic' ? '制度资料为合成样本，请勿作为实际办理依据。' : '请核对制度适用范围。'}</span><span className="mode-detail">{modes.model === 'mock' ? '模拟问答' : 'DeepSeek问答'}{modes.embedding?.startsWith('BAAI/') ? ' · BGE 检索' : ''} · {modes.mail === 'mock' ? '邮件不外发' : 'SMTP通道'}</span></> : '服务状态暂未确认，请检查网络连接。'}</div>{isAdmin ? <AdminApp/> : <UserApp/>}</>
 }
@@ -305,19 +315,37 @@ const sections = [
 function AdminApp() {
   const [authenticated, setAuth] = useState(false)
   const [checking, setChecking] = useState(true)
+  const [sessionCheck, setSessionCheck] = useState(0)
+  const [sessionError, setSessionError] = useState<unknown>(null)
   const [section, setSection] = useState('overview')
   const activeSection = section === 'history' ? 'weekly' : section
   const [drawer, setDrawer] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const [refresh, setRefresh] = useState(0)
-  useEffect(() => { api('/admin/me').then(() => setAuth(true)).catch(e => { if (!(e instanceof ApiError && e.status === 401)) setError(e) }).finally(() => setChecking(false)) }, [])
+  useEffect(() => {
+    let active = true
+    api('/admin/me').then(() => {
+      if (active) setAuth(true)
+    }).catch(e => {
+      if (active && !(e instanceof ApiError && e.status === 401)) setSessionError(e)
+    }).finally(() => { if (active) setChecking(false) })
+    return () => { active = false }
+  }, [sessionCheck])
   async function login(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setError(null); setBusy(true)
     const data = new FormData(e.currentTarget)
     try { await api('/admin/login', 'POST', { username: data.get('username'), password: data.get('password') }); setAuth(true) } catch (e) { setError(e) } finally { setBusy(false) }
   }
   if (checking) return <div className="empty">正在检查管理员会话…</div>
+  if (sessionError) return <main id="main-content" className="admin-login">
+    <ErrorBox error={sessionError}/>
+    <button className="secondary" onClick={() => {
+      setSessionError(null)
+      setChecking(true)
+      setSessionCheck(value => value + 1)
+    }}>重试会话检查</button>
+  </main>
   if (!authenticated) return <main id="main-content" className="admin-login"><a className="text-button" href="#/">← 返回用户网站</a><div className="brand-icon"><ShieldCheck/></div><span className="eyebrow">管理学院 · 管理员入口</span><h1>管理工作台</h1><p className="muted">独立管理员认证。普通用户手机号不具备后台权限。</p><form onSubmit={login}><Field title="管理员账号"><input name="username" required autoComplete="username"/></Field><Field title="密码"><input name="password" required type="password" autoComplete="current-password" maxLength={200}/></Field><ErrorBox error={error}/><button className="primary" disabled={busy}>{busy ? '登录中…' : '登录工作台'}<ArrowUpRight size={18}/></button></form></main>
   return <div className="admin-shell"><aside className={'admin-sidebar ' + (drawer ? 'expanded' : '')}><a className="brand" href="#/admin"><span className="brand-icon"><BookOpen size={22}/></span><span>管院制度服务<small>管理工作台</small></span></a><span className="sidebar-caption">管理导航</span><nav>{sections.map(([id, title, Icon]) => <button key={id} aria-current={activeSection === id ? 'page' : undefined} onClick={() => { setSection(id); setDrawer(false); setError(null) }}><Icon size={18}/>{title}{activeSection === id && <ChevronRight size={14}/>}</button>)}</nav><div className="sidebar-bottom"><p>完整联系方式仅限授权管理使用。</p><a href="#/">用户网站 <ArrowUpRight size={14}/></a><button className="text-button" onClick={async () => { try { await api('/admin/logout', 'POST'); setAuth(false) } catch (e) { setError(e) } }}><LogOut size={16}/>退出后台</button></div></aside><div className="admin-main"><header className="admin-top"><button className="mobile-menu" aria-label="展开管理菜单" onClick={() => setDrawer(!drawer)}><Menu/></button><span>管理学院 / {sections.find(x => x[0] === activeSection)?.[1]}</span><button className="text-button" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={15}/>刷新数据</button></header><main id="main-content" className="admin-content"><div className="page-title"><div><span className="eyebrow">管理学院制度服务</span><h1>{sections.find(x => x[0] === activeSection)?.[1]}</h1></div><span className="muted">北京时间 · 后台处理</span></div><ErrorBox error={error}/><AdminSection key={section + refresh} section={section} navigate={setSection}/></main></div></div>
 }
@@ -334,7 +362,7 @@ function Load<T>({ path, children }: { path: string; children: (data: T, reload:
 }
 
 function AdminSection({ section, navigate }: { section: string; navigate: (s: string) => void }) {
-  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>优先查看紧急事件与通知异常，再处理制度问题。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传资料只会生成草稿，发布后才能进入检索。补充依据后，在问题详情中复测原题，再完成处理。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
+  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>点击「本周新增问题组」或「全部历史问题组」，查看对应的处理状态饼图。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传资料只会生成草稿，发布后才能进入检索。补充依据后，在问题详情中复测原题，再完成处理。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
   if (section === 'weekly' || section === 'history') return <><div className="filter-bar"><button className={section === 'weekly' ? 'primary' : 'secondary'} onClick={() => navigate('weekly')}>本周新增问题组</button><button className={section === 'history' ? 'primary' : 'secondary'} onClick={() => navigate('history')}>全部历史问题组</button></div>{section === 'weekly' ? <WeeklyPage/> : <IssueHistory/>}</>
   if (section === 'knowledge') return <KnowledgePage/>
   if (section === 'events') return <EventsPage/>
