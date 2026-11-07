@@ -415,16 +415,8 @@ function KnowledgePage() {
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const [generation, setGeneration] = useState(0)
-  const [formal, setFormal] = useState(false)
   async function upload(e: FormEvent<HTMLFormElement>) { e.preventDefault(); setBusy(true); setError(null); const data = new FormData(e.currentTarget); try { await api('/admin/documents/upload', 'POST', data); setGeneration(x => x + 1) } catch (e) { setError(e) } finally { setBusy(false) } }
-  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传 → 解析 → 核对元数据与正文 → 发布 → 原题复测</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pdf,.docx,.xlsx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传与解析…' : '上传资料'}</button></form><button className="secondary" onClick={() => setFormal(!formal)}><Plus size={16}/>录入正式答复</button><small>支持PDF / DOCX / XLSX / CSV，单份≤15MB。扫描件需配置OCR并人工核对。</small></div><ErrorBox error={error}/>{formal && <FormalForm saved={() => { setGeneration(x => x + 1); setFormal(false) }}/>}<Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentEditor key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传或录入正式答复。"/>}</Load></>
-}
-
-function FormalForm({ saved }: { saved: () => void }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<unknown>(null)
-  async function submit(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const f = new FormData(e.currentTarget); setBusy(true); setError(null); try { await api('/admin/documents/formal', 'POST', { title: f.get('title'), publisher: f.get('publisher'), content: f.get('content'), confirmed_by: f.get('confirmed_by'), confirmed_on: f.get('confirmed_on'), basis: f.get('basis'), business_year: f.get('year') ? Number(f.get('year')) : null, admission_year: f.get('grade') ? Number(f.get('grade')) : null }); saved() } catch (e) { setError(e) } finally { setBusy(false) } }
-  return <form className="panel" onSubmit={submit}><h3>正式答复 · 新建草稿</h3><div className="form-grid">{[['title', '答复标题'], ['publisher', '发布单位'], ['confirmed_by', '确认人'], ['confirmed_on', '确认日期'], ['year', '业务年度（留空为长期）'], ['grade', '入学年级（可选）']].map(([k, title]) => <Field key={k} title={title}><input name={k} required={!['year', 'grade'].includes(k)} type={k === 'confirmed_on' ? 'date' : ['year', 'grade'].includes(k) ? 'number' : 'text'}/></Field>)}</div><Field title="正式依据与适用条件 *"><textarea name="basis" required/></Field><Field title="答复正文 *"><textarea name="content" rows={5} required/></Field><ErrorBox error={error}/><button className="primary" disabled={busy}>{busy ? '保存中…' : '保存为草稿'}</button></form>
+  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析。核对资料并发布后，大模型即可用它回答学生的问题。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pdf,.docx,.xlsx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传与解析…' : '上传资料'}</button></form><small>支持PDF / DOCX / XLSX / CSV，单份≤15MB。扫描件需配置OCR并人工核对。</small></div><ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentEditor key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
 }
 
 function DocumentEditor({ document: d, reload }: { document: Doc; reload: () => void }) {
