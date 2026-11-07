@@ -4,6 +4,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.config import settings
 from app.db import SessionLocal
 from app.models import Chunk, Document
 from app.qa import DeepSeekModel, ExtractiveMock, ModelFailure
@@ -117,6 +118,28 @@ def test_model_error_and_invalid_reference_not_missing(client, monkeypatch):
     monkeypatch.setattr(ExtractiveMock, "select_evidence", lambda *_: {"selections": [{"chunk_id": "fake", "quote": "随意编造"}]})
     answer = ask(client, "奖学金材料")["answer"]["items"][0]
     assert answer["status"] == "validation_failed" and not answer["citations"]
+
+
+def test_deepseek_answer_separates_summary_from_source(client, monkeypatch):
+    signup(client, student())
+    quote = "数学建模竞赛获省级三等奖的，综测加0.3分。"
+    original = f"第三章 加分项目。{quote}同一项目不重复加分。"
+    publish("综合素质测评办法", original, year=2023)
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+
+    def model_answer(_, question, evidence):
+        return {"answer": summary, "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    question = "数学建模竞赛省级三等奖综测加几分？"
+    summary = "2023年综测加0.3分。"
+    item = ask(client, question, business_year=2023)["answer"]["items"][0]
+    assert item["content"] == summary
+    assert item["citations"][0]["excerpt"] == original
+
+    summary = "2023年综测加0.5分。"
+    item = ask(client, question, business_year=2023)["answer"]["items"][0]
+    assert item["status"] == "validation_failed" and not item["citations"]
 
 
 def test_draft_disable_and_history_source(client):

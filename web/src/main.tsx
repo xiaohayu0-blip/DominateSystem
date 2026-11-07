@@ -231,7 +231,7 @@ function UserApp() {
   </div>
 }
 
-function AnswerView({ answer, open }: { answer: Answer; open?: (c: Citation) => void }) { return <>{answer.items?.map((item, i) => <section className="answer-item" key={i}><div className="answer-title"><Tag value={item.status}/><strong>{item.question}</strong></div><p className="pre-wrap">{item.content}</p>{item.citations.map(c => <button className="citation" key={c.chunk_id} onClick={() => open?.(c)} disabled={!open}><BookOpen size={16}/><span><b>{c.title}</b><small>v{c.version} · {c.location} · {c.business_year ?? '长期制度'}</small></span>{open && <ChevronRight size={16}/>}</button>)}</section>)}<p className="answer-notice">{answer.notice}</p></> }
+function AnswerView({ answer, open }: { answer: Answer; open?: (c: Citation) => void }) { return <>{answer.items?.map((item, i) => <section className="answer-item" key={i}><div className="answer-title"><Tag value={item.status}/><strong>{item.question}</strong></div><p className="pre-wrap">{item.content}</p>{item.citations.length > 0 && <span className="eyebrow">出处</span>}{item.citations.map(c => <button className="citation" key={c.chunk_id} onClick={() => open?.(c)} disabled={!open}><BookOpen size={16}/><span><b>{c.title}</b><small>v{c.version} · {c.location} · {c.business_year ?? '长期制度'}</small></span>{open && <ChevronRight size={16}/>}</button>)}</section>)}<p className="answer-notice">{answer.notice}</p></> }
 
 function newRequestId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
