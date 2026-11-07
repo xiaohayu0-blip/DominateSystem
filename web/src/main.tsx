@@ -1,7 +1,7 @@
 import { StrictMode, cloneElement, isValidElement, useId, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import { ArrowUpRight, ArrowUp, BookOpen, Landmark, FileText, ChevronRight, ShieldCheck, LogOut, Plus, X, LayoutDashboard, Inbox, CalendarDays, Siren, Files, Users, Settings, ScrollText, Search, Menu, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { ArrowUpRight, ArrowUp, BookOpen, Landmark, FileText, ChevronRight, ShieldCheck, LogOut, Plus, X, LayoutDashboard, Inbox, CalendarDays, Siren, Files, Users, Search, Menu, RefreshCw, CheckCircle2 } from 'lucide-react'
 import { api, ApiError, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type Modes, type Answer, type History } from './api'
 import './style.css'
 import './interface.css'
@@ -309,7 +309,7 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
 }
 
 const sections = [
-  ['overview', '工作概览', LayoutDashboard], ['weekly', '后台周报', CalendarDays], ['events', '紧急事件', Siren], ['knowledge', '资料维护', Files], ['people', '登记资料', Users], ['questions', '问答记录', BookOpen], ['settings', '配置状态', Settings], ['audit', '操作审计', ScrollText],
+  ['overview', '工作概览', LayoutDashboard], ['weekly', '后台周报', CalendarDays], ['events', '紧急事件', Siren], ['knowledge', '资料维护', Files], ['people', '登记资料', Users], ['questions', '问答记录', BookOpen],
 ] as const
 
 function AdminApp() {
@@ -347,8 +347,7 @@ function AdminSection({ section, navigate }: { section: string; navigate: (s: st
   if (section === 'events') return <EventsPage/>
   if (section === 'people') return <Load<Profile[]> path="/admin/people">{data => data.length ? <div className="record-grid">{data.map((p, i) => <section className="panel" key={p.id ?? i}><ProfileView person={p}/><small>登记编号 {p.id}</small></section>)}</div> : <Empty/>}</Load>
   if (section === 'questions') return <Load<Question[]> path="/admin/questions">{data => data.length ? data.map(q => <details className="panel" key={q.id}><summary><b>{q.text}</b><small>{stamp(q.created_at)}</small></summary>{q.snapshot && <ProfileView person={q.snapshot}/>}<AnswerView answer={q.answer}/></details>) : <Empty/>}</Load>
-  if (section === 'settings') return <><Load<Record<string, unknown>> path="/admin/settings">{d => <section className="panel"><h2>运行配置</h2><dl className="settings-list">{Object.entries(d).map(([k, v]) => <div key={k}><dt>{({ environment: '运行环境', model: '模型通道', material: '资料来源', mail: '邮件通道', model_configured: '模型已配置', smtp_ready: 'SMTP就绪', real_email_authorized: '真实外发开关', retriever: '检索实现', ocr_enabled: 'OCR开关', retention: '预警清理模式', daily_model_limit: '模型每日请求上限', pending_mail: '待发送/重试任务' } as Record<string, string>)[k] ?? k}</dt><dd>{typeof v === 'boolean' ? v ? '是' : '否' : String(v)}</dd></div>)}</dl><p className="muted">配置通过服务器环境变量管理。此页面不返回密钥。</p></section>}</Load><Load<{ notice: string; candidates: { job_id: string }[] }> path="/admin/retention-preview">{d => <section className="panel"><h3>预警留存预览</h3><p>{d.notice}</p><p>符合7天条件的邮件副本：{d.candidates.length} 份。不会执行删除。</p></section>}</Load></>
-  return <Load<{ id: string; action: string; object_id: string; created_at: string }[]> path="/admin/audit">{d => d.length ? <div className="panel audit-table">{d.map(x => <div key={x.id}><time>{stamp(x.created_at)}</time><b>{x.action}</b><code>{x.object_id}</code></div>)}</div> : <Empty/>}</Load>
+  return null
 }
 
 const reasons = ['missing_material', 'needs_clarification', 'document_conflict', 'validation_failed', 'system_error', 'out_of_scope']
