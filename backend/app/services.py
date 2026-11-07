@@ -1,8 +1,9 @@
+import unicodedata
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from .db import SessionLocal, now
 from .models import ChildEntry, Document, EmergencyEvent, Issue, MailJob, Question, WeeklyMailItem
@@ -18,6 +19,46 @@ def profile(db, person):
             "identity_verified": False}
 
 
+def issue_group_key(issue_text, reason, context):
+    if issue_text == context.get("followup_input"):
+        issue_text = context.get("followup_question") or issue_text
+    normalized = unicodedata.normalize("NFKC", issue_text).casefold()
+    normalized = " ".join(normalized.split()).rstrip(" ?。!.,，")
+    return normalized, reason, context.get("business_year"), context.get("admission_year")
+
+
+def open_issue_roots():
+    return select(Issue, Question.context).join(Question, Issue.question_id == Question.id).where(
+        Issue.merged_into.is_(None), Issue.state.not_in(("completed", "dismissed")),
+        Issue.question_id.not_in(select(EmergencyEvent.question_id)),
+    ).order_by(Issue.created_at, Issue.id)
+
+
+def lock_issue_grouping(db):
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(74831904)"))
+    elif dialect == "sqlite":
+        # Take the write lock before reading existing groups.
+        db.execute(text("BEGIN IMMEDIATE"))
+
+
+def group_existing_issues(db):
+    lock_issue_grouping(db)
+    roots = {}
+    grouped = 0
+    for issue, context in db.execute(open_issue_roots()).all():
+        # Preserve separately worked records and any existing manual groups.
+        if issue.state != "open" or issue.revision != 1 or issue.owner or issue.history:
+            continue
+        key = issue_group_key(issue.text, issue.reason, context)
+        root = roots.setdefault(key, issue)
+        if root.id != issue.id:
+            issue.merged_into = root.id
+            grouped += 1
+    return grouped
+
+
 def finish_question(question_id, factory=SessionLocal):
     with factory() as db:
         q = db.get(Question, question_id)
@@ -29,10 +70,27 @@ def finish_question(question_id, factory=SessionLocal):
             answer = {"items": [{"question": q.text, "status": "system_error",
                                  "content": "服务暂时不可用，已记录技术故障。", "citations": []}],
                       "context": q.context, "model_mode": q.model_mode}
+        failed_items = [item for item in answer["items"] if item["status"] != "answered"]
+        if failed_items:
+            # End the retrieval transaction before acquiring the grouping lock.
+            db.rollback()
+            lock_issue_grouping(db)
+            q = db.get(Question, question_id, populate_existing=True)
+            if not q or q.status != "pending":
+                return
+            roots = {}
+            for issue, context in db.execute(open_issue_roots()).all():
+                roots.setdefault(issue_group_key(issue.text, issue.reason, context), issue)
+            for item in failed_items:
+                key = issue_group_key(item["question"], item["status"], q.context)
+                root = roots.get(key)
+                issue = Issue(question_id=q.id, text=item["question"], reason=item["status"],
+                              merged_into=root.id if root else None)
+                db.add(issue)
+                if root is None:
+                    db.flush()
+                    roots[key] = issue
         q.answer, q.status, q.completed_at = answer, "complete", now()
-        for item in answer["items"]:
-            if item["status"] != "answered":
-                db.add(Issue(question_id=q.id, text=item["question"], reason=item["status"]))
         # Clarification can only resolve within same registration + explicit previous question.
         previous = db.get(Question, q.context.get("previous_id", ""))
         if previous and previous.registration_id == q.registration_id and all(

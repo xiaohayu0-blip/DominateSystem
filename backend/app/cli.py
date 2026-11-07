@@ -102,7 +102,8 @@ def build_bge_index():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["create-admin", "demo-init", "mail-once", "retention-preview", "bge-index"])
+    parser.add_argument("command", choices=["create-admin", "demo-init", "mail-once", "retention-preview",
+                                            "bge-index", "group-duplicate-issues"])
     parser.add_argument("--username", default="admin")
     args = parser.parse_args()
     if args.command == "create-admin":
@@ -113,6 +114,13 @@ def main():
         print("processed" if run_one() else "idle")
     elif args.command == "bge-index":
         build_bge_index()
+    elif args.command == "group-duplicate-issues":
+        from .services import group_existing_issues
+
+        with SessionLocal() as db:
+            grouped = group_existing_issues(db)
+            db.commit()
+        print(f"已归并 {grouped} 条重复待处理问题")
     else:
         with SessionLocal() as db:
             print(json.dumps(retention_preview(db), ensure_ascii=False, indent=2, default=str))

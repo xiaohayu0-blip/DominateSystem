@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import Issue, Question
-from app.services import week_bounds, weekly
+from app.services import group_existing_issues, week_bounds, weekly
 from conftest import signup, student
 from test_knowledge import ask
 
@@ -36,9 +36,9 @@ def test_formal_publish_retest_complete_and_revision(admin_client):
 
 def test_merge_preserves_all_people_and_weekly_no_duplicate(admin_client):
     c = admin_client
-    for name in ["虚构甲", "虚构乙"]:
+    for name, question in [("虚构甲", "校外住宿补助如何申请"), ("虚构乙", "如何申请校外住宿补助")]:
         signup(c, student(name=name))
-        ask(c, "校外住宿补助如何申请")
+        ask(c, question)
     before = c.get("/api/admin/issues").json()
     root, source = before
     merged = c.post(f'/api/admin/issues/{root["id"]}/merge', json={"source_ids": [source["id"]], "note": "已核对相同年度、事项和条件"})
@@ -48,6 +48,27 @@ def test_merge_preserves_all_people_and_weekly_no_duplicate(admin_client):
     with SessionLocal() as db:
         assert len(list(db.scalars(select(Issue)))) == 2
         assert len(list(db.scalars(select(Question)))) == 2
+
+
+def test_identical_issues_group_automatically_and_preserve_occurrences(admin_client):
+    c = admin_client
+    for name, suffix in [("虚构甲", "？"), ("虚构乙", "。")]:
+        signup(c, student(name=name))
+        ask(c, "校外住宿补助如何申请" + suffix, business_year=2026)
+    group, = c.get("/api/admin/issues").json()
+    assert group["count"] == 2
+    assert c.get("/api/admin/weekly").json()["counts"]["new"] == 1
+
+    with SessionLocal() as db:
+        child = db.scalar(select(Issue).where(Issue.merged_into == group["id"]))
+        child.merged_into = None
+        db.commit()
+        assert group_existing_issues(db) == 1
+        db.commit()
+        assert group_existing_issues(db) == 0
+        db.commit()
+    group, = c.get("/api/admin/issues").json()
+    assert {o["snapshot"]["name"] for o in group["occurrences"]} == {"虚构甲", "虚构乙"}
 
 
 def test_week_boundary_backlog_and_history(admin_client):
