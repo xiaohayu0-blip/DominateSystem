@@ -9,12 +9,13 @@ from conftest import signup, student
 from test_knowledge import ask
 
 
-def test_formal_publish_retest_complete_and_revision(admin_client):
+def test_publish_automatically_retests_and_closes_related_issues(admin_client):
     c = admin_client
     signup(c, student())
     question = ask(c, "校外住宿补助如何申请")
     original = question["answer"]
     issue = c.get("/api/admin/issues").json()[0]
+    ask(c, "图书馆遗失物品怎么领取")
     payload = {"revision": issue["revision"], "state": "completed", "owner": "演示老师", "note": "已处理", "evidence_ids": []}
     assert c.patch('/api/admin/issues/' + issue["id"], json=payload).status_code == 422
     d = c.post("/api/admin/documents/formal", json={
@@ -23,15 +24,36 @@ def test_formal_publish_retest_complete_and_revision(admin_client):
         "content": "校外住宿补助申请需提交住宿证明及申请表，结果由学院人工审核。"}).json()
     assert d["status"] == "draft"
     assert c.post(f'/api/admin/documents/{d["id"]}/publish').status_code == 200
-    retest = c.post(f'/api/admin/issues/{issue["id"]}/retest').json()
-    assert retest["retests"][-1]["passed"]
-    payload.update(revision=retest["revision"], evidence_ids=[d["id"]])
-    assert c.patch('/api/admin/issues/' + issue["id"], json=payload).status_code == 200
+    resolved = c.get(f'/api/admin/issues/{issue["id"]}').json()
+    assert resolved["state"] == "completed"
+    assert resolved["retests"][-1]["passed"]
+    assert resolved["evidence_ids"] == [d["id"]]
+    assert resolved["history"][-1]["action"] == "auto_resolved"
+    unrelated = next(item for item in c.get("/api/admin/issues").json() if item["id"] != issue["id"])
+    assert unrelated["state"] == "open"
+    assert not unrelated["retests"]
+    payload["evidence_ids"] = [d["id"]]
     assert c.patch('/api/admin/issues/' + issue["id"], json=payload).status_code == 409
     report = c.get("/api/admin/weekly").json()
-    assert report["new"][0]["state"] == "completed"
+    assert any(item["id"] == issue["id"] and item["state"] == "completed" for item in report["new"])
     assert c.get("/api/questions/" + question["id"]).json()["answer"] == original
     assert c.get("/api/admin/audit").status_code == 200
+
+
+def test_publication_leaves_issue_open_when_only_one_year_has_new_evidence(admin_client):
+    c = admin_client
+    signup(c, student())
+    for year in (2023, 2024):
+        ask(c, "校外住宿补助如何申请", business_year=year)
+    doc = c.post("/api/admin/documents/formal", json={
+        "title": "校外住宿补助申请办法", "publisher": "演示学院",
+        "confirmed_by": "演示老师", "confirmed_on": date.today().isoformat(),
+        "basis": "仅适用2023年度", "business_year": 2023,
+        "content": "校外住宿补助申请需提交住宿证明及申请表。"}).json()
+    assert c.post(f'/api/admin/documents/{doc["id"]}/publish').status_code == 200
+    issue, = c.get("/api/admin/issues").json()
+    assert issue["count"] == 2
+    assert issue["state"] == "open"
 
 
 def test_merge_preserves_all_people_and_weekly_no_duplicate(admin_client):

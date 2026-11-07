@@ -17,14 +17,15 @@ from . import models as m
 from .alerts import HELP_TEXT, create_alert, detect_danger, retention_preview
 from .config import settings
 from .db import SessionLocal, get_db, now
-from .qa import answer_question, context_for
+from .qa import context_for
 from .embeddings import BGE_MODEL, bge_model
 from .retrieval import build_chunks, index_bge
 from .schemas import (DocumentMeta, EventUpdate, FormalReply, IssueUpdate, LoginInput, MergeInput,
                       QuestionInput, RegisterInput, SignupInput)
 from .security import (admin, audit, hash_password, issue_session, token_hash,
                        user, verify_password)
-from .services import ensure_evidence, finish_question, issue_data, profile, weekly
+from .services import (ensure_evidence, finish_question, issue_data, profile,
+                       resolve_issues_after_publish, retest_issue, weekly)
 from .storage import digest, parse_file, store, validate_file
 
 logger = logging.getLogger("dominate")
@@ -404,18 +405,13 @@ def merge(issue_id: str, data: MergeInput, actor=Depends(admin), db: DBSession =
 @app.post("/api/admin/issues/{issue_id}/retest")
 def retest(issue_id: str, actor=Depends(admin), db: DBSession = Depends(get_db)):
     issue = required(db, m.Issue, issue_id)
-    members = [issue] + list(db.scalars(select(m.Issue).where(m.Issue.merged_into == issue.id)))
-    results = []
-    for member in members:
-        q = db.get(m.Question, member.question_id)
-        result = answer_question(db, member.text, q.context)
-        results.append({"issue_id": member.id, "answer": result})
-    passed = all(all(i["status"] == "answered" for i in r["answer"]["items"]) for r in results)
-    doc_ids = sorted({c["document_id"] for r in results for i in r["answer"]["items"] for c in i["citations"]})
-    issue.retests = issue.retests + [{"at": now().isoformat(), "by": actor.username, "passed": passed,
-                                     "results": results, "evidence_ids": doc_ids}]
-    issue.revision += 1
-    audit(db, actor, "issue_retest", issue.id, passed=passed)
+    revision = issue.revision
+    result = retest_issue(db, issue, actor.username)
+    changed = db.execute(update(m.Issue).where(m.Issue.id == issue_id, m.Issue.revision == revision).values(
+        retests=issue.retests + [result], revision=revision + 1))
+    if changed.rowcount != 1:
+        raise HTTPException(409, "记录已被更新，请刷新后重新复测")
+    audit(db, actor, "issue_retest", issue.id, passed=result["passed"])
     db.commit()
     return issue_data(db, issue)
 
@@ -502,7 +498,8 @@ def parse_retry(document_id: str, actor=Depends(admin), db: DBSession = Depends(
 
 
 @app.post("/api/admin/documents/{document_id}/{action}")
-def publication(document_id: str, action: str, actor=Depends(admin), db: DBSession = Depends(get_db)):
+def publication(document_id: str, action: str, tasks: BackgroundTasks, actor=Depends(admin),
+                db: DBSession = Depends(get_db)):
     if action not in {"publish", "disable", "reindex"}:
         raise HTTPException(404, "操作不存在")
     d = required(db, m.Document, document_id)
@@ -523,6 +520,8 @@ def publication(document_id: str, action: str, actor=Depends(admin), db: DBSessi
             index_bge([(c, d) for c in chunks])
     audit(db, actor, "document_" + action, d.id)
     db.commit()
+    if action == "publish":
+        tasks.add_task(resolve_issues_after_publish, d.id, actor.id)
     return document_data(db, d)
 
 

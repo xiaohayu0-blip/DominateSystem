@@ -1,13 +1,19 @@
+import logging
 import unicodedata
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 
 from .db import SessionLocal, now
-from .models import ChildEntry, Document, EmergencyEvent, Issue, MailJob, Question, WeeklyMailItem
+from .models import Admin, ChildEntry, Document, EmergencyEvent, Issue, MailJob, Question, WeeklyMailItem
 from .qa import answer_question
+from .retrieval import retriever
+from .security import audit
+
+
+logger = logging.getLogger("dominate")
 
 
 def profile(db, person):
@@ -126,6 +132,78 @@ def issue_data(db, issue):
             "owner": issue.owner, "evidence_ids": issue.evidence_ids, "retests": issue.retests,
             "history": issue.history, "revision": issue.revision, "created_at": issue.created_at,
             "occurrences": records, "count": len(records)}
+
+
+def retest_issue(db, issue, actor_name, required_document_id=None):
+    members = db.execute(select(Issue, Question.context).join(Question).where(
+        (Issue.id == issue.id) | (Issue.merged_into == issue.id)
+    )).all()
+    if required_document_id is not None:
+        for member, context in members:
+            query = member.text
+            if query == context.get("followup_input"):
+                query = context.get("followup_question") or query
+            evidence, _ = retriever.search(db, query, context)
+            if not any(document.id == required_document_id for _, document in evidence):
+                return None
+
+    results = []
+    passed = True
+    evidence_ids = set()
+    for member, context in members:
+        result = answer_question(db, member.text, context)
+        results.append({"issue_id": member.id, "answer": result})
+        items = result["items"]
+        for item in items:
+            cited = {citation["document_id"] for citation in item["citations"]}
+            evidence_ids.update(cited)
+            passed &= item["status"] == "answered" and (
+                required_document_id is None or required_document_id in cited)
+        passed &= bool(items)
+        if required_document_id is not None and not passed:
+            return None
+    return {"at": now().isoformat(), "by": actor_name, "passed": passed,
+            "results": results, "evidence_ids": sorted(evidence_ids)}
+
+
+def resolve_issues_after_publish(document_id, admin_id, factory=SessionLocal):
+    with factory() as db:
+        issue_ids = list(db.scalars(open_issue_roots().with_only_columns(Issue.id).where(
+            Issue.reason.in_(("missing_material", "document_conflict"))
+        )))
+    for issue_id in issue_ids:
+        try:
+            with factory() as db:
+                issue = db.get(Issue, issue_id)
+                actor = db.get(Admin, admin_id)
+                if not issue or not actor or issue.merged_into or issue.state in {"completed", "dismissed"}:
+                    continue
+                revision = issue.revision
+                retest = retest_issue(db, issue, actor.username, required_document_id=document_id)
+                if retest is None:
+                    continue
+                retests = issue.retests + [retest]
+                history = issue.history + [{"at": now().isoformat(), "by": actor.username,
+                                            "state": "completed", "action": "auto_resolved",
+                                            "document_id": document_id}]
+                # End model/retrieval reads before locking and checking the current state.
+                db.rollback()
+                lock_issue_grouping(db)
+                published = db.scalar(select(Document.id).where(
+                    Document.id == document_id, Document.status == "published"
+                ).with_for_update())
+                if not published:
+                    return
+                changed = db.execute(update(Issue).where(
+                    Issue.id == issue_id, Issue.revision == revision, Issue.merged_into.is_(None),
+                    Issue.state.not_in(("completed", "dismissed")),
+                ).values(state="completed", retests=retests, history=history,
+                         evidence_ids=retest["evidence_ids"], revision=revision + 1))
+                if changed.rowcount == 1:
+                    audit(db, actor, "issue_auto_resolved", issue_id, document_id=document_id)
+                    db.commit()
+        except Exception:
+            logger.exception("Automatic issue retest failed for issue %s", issue_id)
 
 
 def weekly_mail_data(job):
