@@ -124,7 +124,7 @@ def test_model_error_and_invalid_reference_not_missing(client, monkeypatch):
     assert answer["status"] == "validation_failed" and not answer["citations"]
 
 
-def test_deepseek_answer_separates_summary_from_source(client, monkeypatch):
+def test_deepseek_displays_only_verified_excerpts(client, monkeypatch):
     signup(client, student())
     quote = "数学建模竞赛获省级三等奖的，综测加0.3分。"
     original = f"第三章 加分项目。{quote}同一项目不重复加分。"
@@ -132,18 +132,20 @@ def test_deepseek_answer_separates_summary_from_source(client, monkeypatch):
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
 
     def model_answer(_, question, evidence):
-        return {"answer": summary, "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
+        return {"answer": "2023年综测加0.5分。",
+                "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": selected_quote}]}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     question = "数学建模竞赛省级三等奖综测加几分？"
-    summary = "2023年综测加0.3分。"
+    selected_quote = quote
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["content"] == summary
+    assert item["content"] == quote
     assert item["citations"][0]["excerpt"] == original
 
-    summary = "2023年综测加0.5分。"
+    selected_quote = quote.replace("0.3", "0.5")
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
     assert item["status"] == "validation_failed" and not item["citations"]
+    assert item["content"] == "暂无资料"
 
 
 def test_current_year_overrides_inherited_year_and_model_can_abstain(client, monkeypatch):
@@ -160,6 +162,7 @@ def test_current_year_overrides_inherited_year_and_model_can_abstain(client, mon
     answer = ask(client, "今年申请奖学金要交什么", previous_id=previous["id"])["answer"]
     assert answer["context"]["business_year"] == current_year
     assert answer["items"][0]["status"] == "missing_material"
+    assert answer["items"][0]["content"] == "暂无资料"
 
 
 def test_draft_disable_and_history_source(client):
