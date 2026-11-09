@@ -21,12 +21,18 @@ services:
     env_file: ${APP_ENV_FILE:-../.env}
     command: ["alembic", "upgrade", "head"]
     depends_on: {db: {condition: service_healthy}}
+  bge-index:
+    build: {context: .., dockerfile: deploy/backend.Dockerfile}
+    env_file: ${APP_ENV_FILE:-../.env}
+    volumes: ["bge-cache:/data/bge-cache"]
+    command: ["python", "-c", "from app.config import settings; from app.cli import build_bge_index; settings().embedding_mode == 'bge' and build_bge_index()"]
+    depends_on: {migrate: {condition: service_completed_successfully}}
   api:
     build: {context: .., dockerfile: deploy/backend.Dockerfile}
     restart: unless-stopped
     env_file: ${APP_ENV_FILE:-../.env}
-    volumes: ["files:/data/files"]
-    depends_on: {migrate: {condition: service_completed_successfully}}
+    volumes: ["files:/data/files", "bge-cache:/data/bge-cache"]
+    depends_on: {bge-index: {condition: service_completed_successfully}}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
       interval: 15s
@@ -49,3 +55,4 @@ services:
 volumes:
   database:
   files:
+  bge-cache:

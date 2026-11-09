@@ -197,7 +197,7 @@ def test_upload_validation_retry_and_file_permission(admin_client):
         store.path("../escape")
 
 
-def test_pptx_and_zip_upload_publish_locatable_documents(admin_client):
+def test_pptx_and_zip_upload_publish_locatable_documents(admin_client, monkeypatch):
     presentation = io.BytesIO()
     with zipfile.ZipFile(presentation, "w") as deck:
         deck.writestr("ppt/presentation.xml", """
@@ -241,6 +241,30 @@ def test_pptx_and_zip_upload_publish_locatable_documents(admin_client):
         archive.writestr("../越界.csv", "制度,正文")
     assert c.post("/api/admin/documents/upload", files={"file": ("越界.zip", unsafe.getvalue())}).status_code == 422
     assert len(c.get("/api/admin/documents").json()) == 3
+
+    illustrated = io.BytesIO()
+    with zipfile.ZipFile(presentation) as source, zipfile.ZipFile(illustrated, "w") as target:
+        for name in source.namelist():
+            data = source.read(name)
+            if name == "ppt/slides/slide2.xml":
+                data = data.replace(b"</p:sld>", b"<a:blip/></p:sld>")
+            target.writestr(name, data)
+    upload = {"file": ("含图说明.pptx", illustrated.getvalue())}
+    draft = c.post("/api/admin/documents/upload", files=upload).json()
+    assert draft["status"] == "draft" and "尚未解析" in draft["parse_note"]
+
+    from app import storage
+
+    def recognize(path, pages, slide_count, deadline):
+        assert path.suffix == ".pptx" and pages == [1] and slide_count == 1
+        return [("第1页幻灯片（OCR）", "申请需提交成绩单")]
+
+    monkeypatch.setattr(settings(), "ocr_enabled", True)
+    monkeypatch.setattr(storage, "presentation_ocr", recognize)
+    result = c.post(f'/api/admin/documents/{draft["id"]}/retry').json()
+    assert result["status"] == "draft" and "请核对" in result["parse_note"]
+    assert any("（OCR）" in chunk["location"] and "成绩单" in chunk["text"] for chunk in result["chunks"])
+    assert c.post(f'/api/admin/documents/{draft["id"]}/publish').json()["status"] == "published"
 
 
 @pytest.mark.parametrize("format", ["docx", "xlsx", "csv", "pdf"])

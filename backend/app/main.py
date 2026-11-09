@@ -429,9 +429,9 @@ def document_data(db, document):
                    db.scalars(select(m.Chunk).where(m.Chunk.document_id == document.id))]}
 
 
-def parse_document(db, document):
+def parse_document(db, document, *, ocr_deadline=None):
     try:
-        parts, note = parse_file(store.path(document.storage_key))
+        parts, note = parse_file(store.path(document.storage_key), ocr_deadline=ocr_deadline)
         build_chunks(db, document, parts)
         if document.business_year is None:
             document.business_year = infer_business_year(document.original_name, parts[0][1])
@@ -458,6 +458,7 @@ def upload(tasks: BackgroundTasks, file: UploadFile = File(...), actor=Depends(a
         raise HTTPException(422, str(exc))
     saved_keys = []
     imported = []
+    ocr_deadline = time.monotonic() + settings().ocr_upload_timeout_seconds
     try:
         for name, content, suffix in files:
             key = store.save(content, suffix)
@@ -466,7 +467,7 @@ def upload(tasks: BackgroundTasks, file: UploadFile = File(...), actor=Depends(a
                            material_mode=settings().material_mode)
             db.add(d)
             db.flush()
-            parse_document(db, d)
+            parse_document(db, d, ocr_deadline=ocr_deadline)
             if d.parse_status == "ready" and not d.parse_note:
                 d.status = "published"
                 audit(db, actor, "document_publish", d.id, automatic=True)
@@ -536,6 +537,8 @@ def publication(document_id: str, action: str, tasks: BackgroundTasks, actor=Dep
     if action == "publish":
         if d.parse_status != "ready" or not chunks:
             raise HTTPException(422, "发布前需要成功解析的正文")
+        if "图片中的文字尚未解析" in d.parse_note:
+            raise HTTPException(422, "请启用 OCR 并重新解析 PPTX 后再发布")
         if settings().embedding_mode == "bge" and any(c.bge_vector is None for c in chunks):
             index_bge([(c, d) for c in chunks])
         d.status = "published"

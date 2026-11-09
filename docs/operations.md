@@ -1,6 +1,6 @@
 # 部署、备份、恢复和维护
 
-当前只启动本机Demo，不包含正式部署或公开发布授权。以下为单台服务器操作说明，正式执行前核对limitation与真实接入条件。
+以下为学院单台服务器的部署步骤。正式开放前需要提供服务器、HTTPS 域名、数据库口令和模型凭据，并在目标服务器完成验收。
 
 ## 本地开发与Demo
 
@@ -8,7 +8,7 @@
 
 本地日志由启动终端输出；API关闭默认访问日志，避免URL中的内部记录号泛滥。异常只记录异常类型，不输出问题、手机号、密钥或SMTP完整错误。用户错误响应不包含堆栈。不要自行开启HTTP请求/响应体调试。
 
-后台“配置状态”可以看模型/邮件通道、SMTP就绪、待发数量；“紧急事件”可看失败、重试和投递不确定；“操作审计”记录重要操作。当前未实现worker心跳，值守需额外监控进程和队列积压。
+网站顶部显示当前模型和检索方式。工作台可查看紧急事件和邮件状态。审计记录保存在数据库。运维需监控工作进程和队列积压。
 
 ## Docker Compose（单机）
 
@@ -23,11 +23,11 @@ docker compose --env-file .env -f deploy/compose.yaml logs --tail=100 api worker
 docker compose --env-file .env -f deploy/compose.yaml exec api python -m app.cli create-admin --username college-admin
 ```
 
-Compose顺序：数据库健康 → 一次性迁移成功 → API/worker → 网站。密码在终端隐藏输入，不放命令行参数或源码。web默认仅映射服务器 `127.0.0.1:8080`，由服务器外层HTTPS反代转发到此端口。不要把数据库端口公开。api与worker必须使用相同.env、相同数据库。API保持单进程；加副本前先实现共享限流/预算。
+Compose 启动顺序为数据库 → 迁移 → BGE 缓存与索引准备 → API → 网站。邮件工作进程在迁移完成后启动。首次使用 BGE 时需要能下载模型，后续从持久卷读取。管理员密码在终端隐藏输入。网页端默认监听服务器 `127.0.0.1:8080`，由服务器外层 HTTPS 反代转发。API 与工作进程使用同一配置和数据库。API 保持单进程，加副本前先实现共享限流和预算。
 
-正式环境配置校验强制HTTPS、Secure cookie和PostgreSQL。邮件默认 `ALLOW_REAL_EMAIL=false`，只有取得明确授权后再开启；QQ收件地址仅允许配置指定QQ邮箱。真实模型模式缺密钥会拒绝启动，不能静默改成模拟。
+正式环境要求 HTTPS、Secure Cookie 和 PostgreSQL。邮件配置保持 `MAIL_MODE=mock` 和 `ALLOW_REAL_EMAIL=false`。使用云端 DeepSeek 时，必须在服务器环境配置 `DEEPSEEK_API_KEY`，相关资料片段会随模型请求外发。BGE 和 OCR 由服务器本地执行，无需 API Key。
 
-容器镜像使用固定Python/Node/uv版本；应用依赖由uv.lock和package-lock.json锁定。操作系统基础镜像需按安全维护窗口审核并更新，正式上线建议额外锁镜像digest。OCR不在默认镜像内；需要时由运维添加Poppler、Tesseract及中文语言包后单独验收。
+容器镜像使用固定 Python、Node 和 uv 版本，应用依赖由锁文件管理。镜像内包含 LibreOffice Impress、Poppler、Tesseract 和简体中文识别包。正式配置开启 OCR 后，含图 PPTX 按实际画面渲染，扫描 PDF 按页识别。OCR 结果保留页码并等待管理员核对，发布后进入问答。此前上传的含图 PPT 可先停用，再重新解析、核对和发布。
 
 ## 数据库和原文件备份
 

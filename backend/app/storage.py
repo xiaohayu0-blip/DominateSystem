@@ -5,6 +5,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -107,7 +108,7 @@ def unpack_documents(data: bytes):
     return documents, skipped
 
 
-def parse_presentation(path: Path) -> list[tuple[str, str]]:
+def parse_presentation(path: Path, ocr_deadline: float) -> tuple[list[tuple[str, str]], str]:
     from lxml import etree
 
     presentation = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
@@ -115,6 +116,7 @@ def parse_presentation(path: Path) -> list[tuple[str, str]]:
     drawing = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
     parser = etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)
     parts = []
+    image_pages = []
     try:
         with zipfile.ZipFile(path) as archive:
             deck = etree.fromstring(archive.read("ppt/presentation.xml"), parser)
@@ -130,20 +132,73 @@ def parse_presentation(path: Path) -> list[tuple[str, str]]:
                 if not member.startswith("ppt/slides/") or not member.endswith(".xml"):
                     raise ValueError("PPTX 幻灯片路径无效")
                 slide = etree.fromstring(archive.read(member), parser)
+                if slide.get("show") in {"0", "false"}:
+                    continue
                 paragraphs = ["".join(node.text or "" for node in paragraph.iter(drawing + "t"))
                               for paragraph in slide.iter(drawing + "p")]
                 text = "\n".join(paragraph for paragraph in paragraphs if paragraph.strip())
                 if text:
                     parts.append((f"第{index}页幻灯片", text))
+                if next(slide.iter(drawing + "blip"), None) is not None:
+                    image_pages.append(index)
     except (KeyError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
         raise ValueError("PPTX 幻灯片结构损坏") from exc
-    return parts
+    if not image_pages:
+        return parts, ""
+    if not settings().ocr_enabled:
+        return parts, "PPTX 含图片，当前未启用 OCR。图片中的文字尚未解析。"
+    parts.extend(presentation_ocr(path, image_pages, len(slide_ids), ocr_deadline))
+    return parts, "PPTX 图片页面已执行 OCR，请核对识别文字及表格数值后发布。"
 
 
-def parse_file(path: Path) -> tuple[list[tuple[str, str]], str]:
+def presentation_ocr(path: Path, image_pages: list[int], slide_count: int,
+                     deadline: float) -> list[tuple[str, str]]:
+    from pypdf import PdfReader
+
+    config = settings()
+    try:
+        # The renderer must not resolve linked content from the upload.
+        from lxml import etree
+
+        parser = etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)
+        with zipfile.ZipFile(path) as archive:
+            for name in archive.namelist():
+                if name.startswith("ppt/embeddings/") and not name.endswith("/"):
+                    raise ValueError("PPTX 含嵌入对象，自动 OCR 前请移除该对象")
+                if name.endswith(".rels"):
+                    relationships = etree.fromstring(archive.read(name), parser)
+                    if any(r.get("TargetMode") == "External" and not r.get("Type", "").endswith("/hyperlink")
+                           for r in relationships):
+                        raise ValueError("PPTX 含外部链接资源，自动 OCR 前请将资源嵌入文件")
+        # A separate LibreOffice profile keeps concurrent conversions isolated.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            subprocess.run(
+                [config.libreoffice_command, f"-env:UserInstallation={(root / 'profile').as_uri()}",
+                 "--headless", "--convert-to",
+                 'pdf:impress_pdf_Export:{"ExportHiddenSlides":{"type":"boolean","value":"true"}}',
+                 "--outdir", str(root), str(path.resolve())],
+                check=True, capture_output=True, timeout=min(config.ocr_timeout_seconds, remaining_time(deadline)),
+            )
+            pdf = root / f"{path.stem}.pdf"
+            if not pdf.is_file() or len(PdfReader(pdf).pages) != slide_count:
+                raise ValueError("PPTX 渲染后的页数与原文件不一致，无法确认 OCR 出处")
+            parts = []
+            for page in image_pages:
+                text = ocr_page(pdf, page, deadline=deadline).strip()
+                if text:
+                    parts.append((f"第{page}页幻灯片（OCR）", text))
+            return parts
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("PPTX 渲染或 OCR 失败，请检查 LibreOffice、Poppler 和 Tesseract 配置或处理时限") from exc
+
+
+def parse_file(path: Path, *, ocr_deadline: float | None = None) -> tuple[list[tuple[str, str]], str]:
     suffix = path.suffix.lower()
     parts: list[tuple[str, str]] = []
     note = ""
+    if ocr_deadline is None:
+        ocr_deadline = time.monotonic() + settings().ocr_upload_timeout_seconds
     if suffix == ".csv":
         import csv
         raw = path.read_bytes()
@@ -178,7 +233,7 @@ def parse_file(path: Path) -> tuple[list[tuple[str, str]], str]:
         finally:
             wb.close()
     elif suffix == ".pptx":
-        parts = parse_presentation(path)
+        parts, note = parse_presentation(path, ocr_deadline)
     else:
         from pypdf import PdfReader
         reader = PdfReader(path)
@@ -190,7 +245,7 @@ def parse_file(path: Path) -> tuple[list[tuple[str, str]], str]:
             if len(text.strip()) < 10:
                 scanned.append(i)
                 if settings().ocr_enabled:
-                    text = ocr_page(path, i)
+                    text = ocr_page(path, i, deadline=ocr_deadline)
             if text.strip():
                 parts.append((f"第{i}页", text))
         if scanned:
@@ -199,21 +254,34 @@ def parse_file(path: Path) -> tuple[list[tuple[str, str]], str]:
                 else "OCR未开启，请配置OCR后重试。")
             if not settings().ocr_enabled:
                 raise ValueError(note)
+    if not parts and note:
+        raise ValueError(note)
     if not parts or sum(len(t) for _, t in parts) > 2_000_000:
         raise ValueError("未提取到文本或文本超过200万字符")
     return parts, note
 
 
-def ocr_page(path: Path, page: int) -> str:
+def remaining_time(deadline: float) -> float:
+    seconds = deadline - time.monotonic()
+    if seconds <= 0:
+        raise subprocess.TimeoutExpired("PPTX OCR", 0)
+    return seconds
+
+
+def ocr_page(path: Path, page: int, *, deadline: float | None = None) -> str:
     config = settings()
+    def timeout():
+        return (config.ocr_timeout_seconds if deadline is None else
+                min(config.ocr_timeout_seconds, remaining_time(deadline)))
+
     with tempfile.TemporaryDirectory() as folder:
         target = Path(folder) / "page"
         subprocess.run([config.pdftoppm_command, "-f", str(page), "-l", str(page), "-scale-to", "2200",
                         "-singlefile", "-png", str(path), str(target)], check=True,
-                       capture_output=True, timeout=config.ocr_timeout_seconds)
+                        capture_output=True, timeout=timeout())
         result = subprocess.run([config.tesseract_command, str(target) + ".png", "stdout", "-l",
                                  config.ocr_language], check=True, capture_output=True,
-                                timeout=config.ocr_timeout_seconds)
+                                timeout=timeout())
         return result.stdout.decode("utf-8", errors="replace")
 
 

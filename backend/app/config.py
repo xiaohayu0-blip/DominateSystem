@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     ocr_enabled: bool = False
     ocr_language: str = "chi_sim+eng"
     ocr_timeout_seconds: int = 30
+    ocr_upload_timeout_seconds: int = 90
+    libreoffice_command: str = "soffice"
     tesseract_command: str = "tesseract"
     pdftoppm_command: str = "pdftoppm"
 
