@@ -13,6 +13,10 @@ from conftest import signup, parent, student
 @pytest.mark.parametrize("text,expected", [
     ("我不想活了", True), ("孩子说他想自杀", True), ("我现在有生命危险，救命", True),
     ("我没有自杀想法", False), ("预防轻生的制度是什么", False), ("新闻中提到想自杀", False),
+    ("活着好累", True), ("活 得 太 累 了。", True), ("我觉得活着真的没意思", True),
+    ("我不想继续活下去", True), ("我真的撑不下去了", True),
+    ("我没有想自杀，但我觉得活着太痛苦了", True),
+    ("今天上课好累，想请假", False), ("考试复习好累", False),
 ])
 def test_detector_examples(text, expected):
     assert detect_danger(text) == expected
@@ -22,14 +26,15 @@ def alert(client, request_id="emergency-test-00001"):
     return client.post("/api/questions", json={"request_id": request_id, "text": "演示用例：孩子说他不想活了"})
 
 
-def test_event_skips_knowledge_and_keeps_parent_snapshot(client, monkeypatch):
+@pytest.mark.parametrize("text", ["孩子说他不想活了", "孩子说活着好累"])
+def test_event_skips_knowledge_and_keeps_parent_snapshot(client, monkeypatch, text):
     signup(client, parent())
     seen = []
     from app import services
     def examine(db, text, context):
         seen.append(text)
     monkeypatch.setattr(services, "answer_question", examine)
-    response = alert(client)
+    response = client.post("/api/questions", json={"request_id": "emergency-test-00001", "text": text})
     assert response.status_code == 202 and response.json()["alert"]
     assert not seen
     with SessionLocal() as db:

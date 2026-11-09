@@ -3,6 +3,7 @@ import re
 import smtplib
 import ssl
 import time
+import unicodedata
 from datetime import datetime, time as clock_time, timedelta, timezone
 from email.message import EmailMessage
 from typing import Protocol
@@ -18,18 +19,31 @@ from .schemas import scrub
 
 HELP_TEXT = "如果你或这位同学可能马上受到伤害，请立即联系身边可信任的人或当地紧急救助。不要等待系统通知。识别可能误报或漏报，邮件不能代替紧急求助，也不保证收件人及时阅读。"
 
+DANGER_CUES = re.compile(
+    r"想死|不想活|想自杀|要自杀|准备自杀|正在自残|正在自伤|活不下去|结束生命|生命危险|救命"
+    r"|(?<!生)(?:活着|活得|活下去|活在这个世界上).{0,8}(?:累|痛苦|折磨|难熬|太难|没意思|没意义|没有意义|没盼头|没希望)"
+    r"|(?:不想|不愿|不打算)(?:再|继续|这样){0,3}活(?:着|下去|了)"
+    r"|(?:撑|熬|挺)不下去(?:了)?$|(?:好想|真想|只想)(?:从这个世界上)?消失"
+)
+DANGER_EXCLUSIONS = re.compile(
+    r"没有.{0,3}(自杀|自伤|轻生)|不想自杀|新闻|制度|预防|科普|论文"
+)
+
+
+def has_danger_cue(text: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", text)
+    clauses = re.split(r"[。！？!?，,；;\n]|但是|但我", normalized)
+    for clause in clauses:
+        clause = re.sub(r"\s+", "", clause)
+        if not DANGER_EXCLUSIONS.search(clause) and DANGER_CUES.search(clause):
+            return True
+    return False
+
 
 def detect_danger(text: str, previous: str = "") -> bool:
-    # Transparent, deliberately limited detector. Context is included for continuation cues.
-    direct = r"想死|不想活|想自杀|要自杀|准备自杀|正在自残|正在自伤|活不下去|结束生命|生命危险|救命"
-    for sentence in re.split(r"[。！？!?\n]", text):
-        if re.search(r"没有.{0,3}(自杀|自伤|轻生)|不想自杀|新闻|制度|预防|科普|论文", sentence):
-            continue
-        if re.search(direct, sentence):
-            return True
-    if previous and re.search(direct, previous) and re.search(r"现在就|马上|已经开始|撑不住", text):
-        return True
-    return False
+    return has_danger_cue(text) or bool(
+        previous and has_danger_cue(previous) and re.search(r"现在就|马上|已经开始|撑不住", text)
+    )
 
 
 def create_alert(db, question: Question):
