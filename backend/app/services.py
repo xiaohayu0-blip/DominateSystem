@@ -139,13 +139,17 @@ def retest_issue(db, issue, actor_name, required_document_id=None):
         (Issue.id == issue.id) | (Issue.merged_into == issue.id)
     )).all()
     if required_document_id is not None:
+        relevant = False
         for member, context in members:
             query = member.text
             if query == context.get("followup_input"):
                 query = context.get("followup_question") or query
             evidence, _ = retriever.search(db, query, context)
-            if not any(document.id == required_document_id for _, document in evidence):
-                return None
+            if any(document.id == required_document_id for _, document in evidence):
+                relevant = True
+                break
+        if not relevant:
+            return None
 
     results = []
     passed = True
@@ -157,11 +161,12 @@ def retest_issue(db, issue, actor_name, required_document_id=None):
         for item in items:
             cited = {citation["document_id"] for citation in item["citations"]}
             evidence_ids.update(cited)
-            passed &= item["status"] == "answered" and (
-                required_document_id is None or required_document_id in cited)
+            passed &= item["status"] == "answered" and bool(cited)
         passed &= bool(items)
         if required_document_id is not None and not passed:
             return None
+    if required_document_id is not None and required_document_id not in evidence_ids:
+        return None
     return {"at": now().isoformat(), "by": actor_name, "passed": passed,
             "results": results, "evidence_ids": sorted(evidence_ids)}
 

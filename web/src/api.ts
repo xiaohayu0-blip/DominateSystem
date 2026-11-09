@@ -40,7 +40,7 @@ export type Modes = { environment: string; model: string; material: string; mail
 export const label: Record<string, string> = {
   answered: '有据可查', missing_material: '待补充资料', needs_clarification: '待澄清', document_conflict: '资料冲突',
   validation_failed: '证据校验失败', system_error: '技术故障', out_of_scope: '服务范围外',
-  open: '待处理', in_progress: '处理中', awaiting_material: '待补充资料', awaiting_retest: '待复测', completed: '已完成', dismissed: '无需处理',
+  open: '待处理', in_progress: '处理中', awaiting_material: '待补充资料', awaiting_retest: '待复测', completed: '已解决', dismissed: '无需处理',
   following: '跟进中', closed: '已结束', pending: '待发送', sending: '发送中', retry: '等待重试', failed: '失败',
   simulated_sent: '模拟已发送', submitted: '已提交邮件服务器', uncertain: '投递不确定·需人工核对', unconfigured: '未配置',
   draft: '草稿', published: '已发布', disabled: '已停用', ready: '解析就绪',

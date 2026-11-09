@@ -54,6 +54,15 @@ def test_publication_leaves_issue_open_when_only_one_year_has_new_evidence(admin
     issue, = c.get("/api/admin/issues").json()
     assert issue["count"] == 2
     assert issue["state"] == "open"
+    next_doc = c.post("/api/admin/documents/formal", json={
+        "title": "校外住宿补助申请办法", "publisher": "演示学院",
+        "confirmed_by": "演示老师", "confirmed_on": date.today().isoformat(),
+        "basis": "仅适用2024年度", "business_year": 2024,
+        "content": "校外住宿补助申请需提交租房合同及申请表。"}).json()
+    assert c.post(f'/api/admin/documents/{next_doc["id"]}/publish').status_code == 200
+    issue, = c.get("/api/admin/issues").json()
+    assert issue["state"] == "completed"
+    assert set(issue["evidence_ids"]) == {doc["id"], next_doc["id"]}
 
 
 def test_merge_preserves_all_people_and_weekly_no_duplicate(admin_client):
