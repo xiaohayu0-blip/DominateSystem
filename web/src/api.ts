@@ -38,7 +38,7 @@ export type Weekly = { mail_enabled: boolean; weekly_mail: WeeklyMail | null; st
 export type Emergency = { id: string; text: string; state: string; snapshot: Profile; history: History[]; created_at: string; mail: { id: string; mode: string; status: string; body: string; attempts: number; error_code: string; attempt_history: { at: string; result: string }[] } }
 export type Modes = { environment: string; model: string; material: string; mail: string; embedding?: string }
 export const label: Record<string, string> = {
-  answered: '有据可查', missing_material: '待补充资料', needs_clarification: '待澄清', document_conflict: '资料冲突',
+  answered: '有据可查', historical_reference: '历史资料参考', missing_material: '待补充资料', needs_clarification: '待澄清', document_conflict: '资料冲突',
   validation_failed: '证据校验失败', system_error: '技术故障', out_of_scope: '服务范围外',
   open: '待处理', in_progress: '处理中', awaiting_material: '待补充资料', awaiting_retest: '待复测', completed: '已解决', dismissed: '无需处理',
   following: '跟进中', closed: '已结束', pending: '待发送', sending: '发送中', retry: '等待重试', failed: '失败',

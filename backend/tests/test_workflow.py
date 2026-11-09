@@ -48,7 +48,7 @@ def test_publication_leaves_issue_open_when_only_one_year_has_new_evidence(admin
     doc = c.post("/api/admin/documents/formal", json={
         "title": "校外住宿补助申请办法", "publisher": "演示学院",
         "confirmed_by": "演示老师", "confirmed_on": date.today().isoformat(),
-        "basis": "仅适用2023年度", "business_year": 2023,
+        "basis": "仅适用2024年度", "business_year": 2024,
         "content": "校外住宿补助申请需提交住宿证明及申请表。"}).json()
     assert c.post(f'/api/admin/documents/{doc["id"]}/publish').status_code == 200
     issue, = c.get("/api/admin/issues").json()
@@ -57,7 +57,7 @@ def test_publication_leaves_issue_open_when_only_one_year_has_new_evidence(admin
     next_doc = c.post("/api/admin/documents/formal", json={
         "title": "校外住宿补助申请办法", "publisher": "演示学院",
         "confirmed_by": "演示老师", "confirmed_on": date.today().isoformat(),
-        "basis": "仅适用2024年度", "business_year": 2024,
+        "basis": "仅适用2023年度", "business_year": 2023,
         "content": "校外住宿补助申请需提交租房合同及申请表。"}).json()
     assert c.post(f'/api/admin/documents/{next_doc["id"]}/publish').status_code == 200
     issue, = c.get("/api/admin/issues").json()

@@ -8,7 +8,7 @@ from sqlalchemy import select, text, update
 
 from .db import SessionLocal, now
 from .models import Admin, ChildEntry, Document, EmergencyEvent, Issue, MailJob, Question, WeeklyMailItem
-from .qa import answer_question
+from .qa import answer_question, retrieval_query
 from .retrieval import retriever
 from .security import audit
 
@@ -80,7 +80,7 @@ def finish_question(question_id, factory=SessionLocal):
             answer = {"items": [{"question": q.text, "status": "system_error",
                                  "content": "服务暂时不可用，已记录技术故障。", "citations": []}],
                       "context": q.context, "model_mode": q.model_mode}
-        failed_items = [item for item in answer["items"] if item["status"] != "answered"]
+        failed_items = [item for item in answer["items"] if item["status"] not in {"answered", "historical_reference"}]
         if failed_items:
             # End the retrieval transaction before acquiring the grouping lock.
             db.rollback()
@@ -139,12 +139,18 @@ def retest_issue(db, issue, actor_name, required_document_id=None):
         (Issue.id == issue.id) | (Issue.merged_into == issue.id)
     )).all()
     if required_document_id is not None:
+        document = db.get(Document, required_document_id)
+        if not document or document.status != "published":
+            return None
         relevant = False
         for member, context in members:
-            query = member.text
-            if query == context.get("followup_input"):
-                query = context.get("followup_question") or query
+            query = retrieval_query(member.text, context)
             evidence, _ = retriever.search(db, query, context)
+            if document.business_year is not None and document.business_year < context["business_year"]:
+                historical_context = {**context, "business_year": document.business_year,
+                                      "selected_year": document.business_year, "historical_only": True}
+                historical, _ = retriever.search(db, query, historical_context)
+                evidence += historical
             if any(document.id == required_document_id for _, document in evidence):
                 relevant = True
                 break
@@ -154,14 +160,19 @@ def retest_issue(db, issue, actor_name, required_document_id=None):
     results = []
     passed = True
     evidence_ids = set()
+    answers = {}
     for member, context in members:
-        result = answer_question(db, member.text, context)
+        key = (member.text, context.get("business_year"), context.get("selected_year"),
+               context.get("admission_year"), context.get("followup_input"), context.get("followup_question"))
+        if key not in answers:
+            answers[key] = answer_question(db, member.text, context)
+        result = {**answers[key], "context": context}
         results.append({"issue_id": member.id, "answer": result})
         items = result["items"]
         for item in items:
             cited = {citation["document_id"] for citation in item["citations"]}
             evidence_ids.update(cited)
-            passed &= item["status"] == "answered" and bool(cited)
+            passed &= item["status"] in {"answered", "historical_reference"} and bool(cited)
         passed &= bool(items)
         if required_document_id is not None and not passed:
             return None
@@ -174,7 +185,7 @@ def retest_issue(db, issue, actor_name, required_document_id=None):
 def resolve_issues_after_publish(document_id, admin_id, factory=SessionLocal):
     with factory() as db:
         issue_ids = list(db.scalars(open_issue_roots().with_only_columns(Issue.id).where(
-            Issue.reason.in_(("missing_material", "document_conflict"))
+            Issue.reason.in_(("missing_material", "document_conflict", "validation_failed"))
         )))
     for issue_id in issue_ids:
         try:

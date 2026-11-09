@@ -165,7 +165,7 @@ def test_current_year_overrides_inherited_year_and_model_can_abstain(client, mon
     assert answer["items"][0]["content"] == "暂无资料"
 
 
-def test_historical_reference_keeps_current_year_unanswered(client, monkeypatch):
+def test_historical_reference_does_not_open_an_issue(client, monkeypatch):
     signup(client, student())
     historic = publish("应征入伍指南", "应征入伍基本条件\n男性身高160cm以上。", year=2024)
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
@@ -175,11 +175,14 @@ def test_historical_reference_keeps_current_year_unanswered(client, monkeypatch)
     result = ask(client, "2026年征兵入伍的条件是什么")["answer"]
     assert result["context"]["business_year"] == 2026
     item = result["items"][0]
-    assert item["status"] == "missing_material"
+    assert item["status"] == "historical_reference"
     assert "暂无2026年" in item["content"] and "2024年资料" in item["content"]
     assert item["content"].endswith("男性身高160cm以上。")
     assert {c["document_id"] for c in item["citations"]} == {historic}
-    latest = ask(client, "征兵入伍的条件是什么", business_year=2024)["answer"]["items"][0]
+    from app.models import Issue
+    with SessionLocal() as db:
+        assert db.scalar(select(Issue)) is None
+    latest = ask(client, "2024年征兵入伍的条件是什么")["answer"]["items"][0]
     assert latest["status"] == "answered" and latest["content"] == "男性身高160cm以上。"
 
 

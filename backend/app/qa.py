@@ -160,6 +160,14 @@ def cohort_label(source):
     return scope[1] if scope else ""
 
 
+def retrieval_query(part, context):
+    if part == context.get("followup_input"):
+        return context.get("followup_question") or part
+    # The year is already a hard filter. Keep full dates and enrollment cohorts in the topic.
+    year_prefix = rf"^(?:请问\s*)?{context['business_year']}\s*(?:年度|年)(?!级|入学|\s*\d{{1,2}}月)"
+    return re.sub(year_prefix, "", part).strip(" ，,") or part
+
+
 def historical_reference(db, query, context):
     year = context["business_year"]
     earlier = db.scalars(select(Document.business_year).where(
@@ -186,7 +194,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
     results = []
     model = ExtractiveMock() if settings().model_mode == "mock" else DeepSeekModel()
     for part in split_questions(text):
-        query = context["followup_question"] if part == context.get("followup_input") else part
+        query = retrieval_query(part, context)
         evidence, special = retriever.search(db, query, context)
         citations = [citation(c, d) for c, d in evidence]
         cohort_options = special == "cohort_options"
@@ -260,6 +268,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             reference = historical_reference(db, query, context)
             if reference:
                 content, displayed_citations = reference
+                reason = "historical_reference"
         results.append({"question": part, "status": reason or "answered", "content": content,
                         "citations": displayed_citations})
     return {"items": results, "context": context, "model_mode": settings().model_mode,
