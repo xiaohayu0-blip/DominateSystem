@@ -45,8 +45,9 @@ try {
     if ($LanAddress) {
         & $pythonExe -c "from app.config import settings; import sys; sys.exit(settings().environment != 'demo')"
         if ($LASTEXITCODE -ne 0) { throw 'LAN startup is available only in the demo environment.' }
-        $env:DEMO_LAN_ORIGIN = $webUrl
     }
+    # The browser may use the bind address shown by Vite instead of localhost.
+    $env:DEMO_LAN_ORIGIN = "http://${webHost}:5173"
     $serverProcess = Start-Process -FilePath $pythonExe -ArgumentList @('-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8000','--no-access-log') -WorkingDirectory $backendRoot -WindowStyle Hidden -PassThru
     $workerProcess = Start-Process -FilePath $pythonExe -ArgumentList @('-m','app.alerts') -WorkingDirectory $backendRoot -WindowStyle Hidden -PassThru
     Set-Location $webRoot
