@@ -99,7 +99,7 @@ class HybridRetriever:
                              if term not in GENERIC and not term.isdigit()}
                 if not row_terms:
                     continue
-            if doc.business_year is not None and doc.business_year != year:
+            if doc.business_year != year and (doc.business_year is not None or context.get("historical_only")):
                 continue
             if doc.effective_from and doc.effective_from > asof:
                 continue
