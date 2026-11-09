@@ -258,6 +258,7 @@ def weekly(db, day):
     from .config import settings
     return {"start": local.isoformat(), "end": local_end.isoformat(), "new": new, "backlog": backlog,
             "total_issue_groups": len(roots),
+            "pending_issue_groups": sum(root.state not in {"completed", "dismissed"} for root in roots),
             "counts": {"new": len(new), "backlog": len(backlog), "by_reason": groups},
             "timezone": "Asia/Shanghai", "mail_enabled": settings().weekly_mail_enabled,
             "weekly_mail": weekly_mail_data(job)}

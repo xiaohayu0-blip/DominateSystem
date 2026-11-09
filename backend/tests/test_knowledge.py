@@ -186,6 +186,17 @@ def test_historical_reference_does_not_open_an_issue(client, monkeypatch):
     assert latest["status"] == "answered" and latest["content"] == "男性身高160cm以上。"
 
 
+@pytest.mark.parametrize("question", [
+    "入伍的条件是啥", "参军要满足哪些要求", "当兵需要什么条件", "报名参军有什么门槛",
+])
+def test_colloquial_enlistment_questions_retrieve_eligibility(client, question):
+    signup(client, student())
+    doc = publish("大学生应征入伍指南", "应征入伍基本条件\n男性身高160cm以上。", year=2024)
+    item = ask(client, question, business_year=2024)["answer"]["items"][0]
+    assert item["status"] == "answered"
+    assert {citation["document_id"] for citation in item["citations"]} == {doc}
+
+
 def test_draft_disable_and_history_source(client):
     signup(client, student())
     doc_id = publish(status="draft")

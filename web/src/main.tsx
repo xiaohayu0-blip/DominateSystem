@@ -334,11 +334,31 @@ function AdminApp() {
   return <div className="admin-shell"><aside className={'admin-sidebar ' + (drawer ? 'expanded' : '')}><a className="brand" href="#/admin"><span className="brand-icon"><BookOpen size={22}/></span><span>管院制度服务<small>管理工作台</small></span></a><span className="sidebar-caption">管理导航</span><nav>{sections.map(([id, title, Icon]) => <button key={id} aria-current={activeSection === id ? 'page' : undefined} onClick={() => { setSection(id); setDrawer(false); setError(null) }}><Icon size={18}/>{title}{activeSection === id && <ChevronRight size={14}/>}</button>)}</nav><div className="sidebar-bottom"><p>完整联系方式仅限授权管理使用。</p><a href="#/">用户网站 <ArrowUpRight size={14}/></a><button className="text-button" onClick={async () => { try { await api('/admin/logout', 'POST'); setAuth(false) } catch (e) { setError(e) } }}><LogOut size={16}/>退出后台</button></div></aside><div className="admin-main"><header className="admin-top"><button className="mobile-menu" aria-label="展开管理菜单" onClick={() => setDrawer(!drawer)}><Menu/></button><span>管理学院 / {sections.find(x => x[0] === activeSection)?.[1]}</span><button className="text-button" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={15}/>刷新数据</button></header><main id="main-content" className="admin-content"><div className="page-title"><div><span className="eyebrow">管理学院制度服务</span><h1>{sections.find(x => x[0] === activeSection)?.[1]}</h1></div><span className="muted">北京时间 · 后台处理</span></div><ErrorBox error={error}/><AdminSection key={section + refresh} section={section} navigate={setSection}/></main></div></div>
 }
 
-function Load<T>({ path, children }: { path: string; children: (data: T, reload: () => void) => ReactNode }) {
+function Load<T>({ path, children, autoRefresh = false }: { path: string; children: (data: T, reload: () => void) => ReactNode; autoRefresh?: boolean }) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [version, setVersion] = useState(0)
-  useEffect(() => { let active = true; api<T>(path).then(d => { if (active) setData(d) }).catch(e => { if (active) setError(e) }); return () => { active = false } }, [path, version])
+  useEffect(() => {
+    let active = true
+    let loading = false
+    async function fetchData(reportError: boolean) {
+      if (loading) return
+      loading = true
+      try {
+        const next = await api<T>(path)
+        if (active) { setData(next); setError(null) }
+      } catch (e) {
+        if (active && reportError) setError(e)
+      } finally {
+        loading = false
+      }
+    }
+    void fetchData(true)
+    const timer = autoRefresh ? window.setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchData(false)
+    }, 5000) : undefined
+    return () => { active = false; if (timer !== undefined) window.clearInterval(timer) }
+  }, [path, version, autoRefresh])
   const reload = () => { setData(null); setError(null); setVersion(x => x + 1) }
   if (error) return <><ErrorBox error={error}/><button className="secondary" onClick={reload}>重新加载</button></>
   if (data === null) return <div className="loading panel">正在读取实际记录…</div>
@@ -346,7 +366,7 @@ function Load<T>({ path, children }: { path: string; children: (data: T, reload:
 }
 
 function AdminSection({ section, navigate }: { section: string; navigate: (s: string) => void }) {
-  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>点击「本周新增问题组」或「全部历史问题组」，查看各状态的问题组数量。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传的资料解析后自动发布，系统会在后台复测相关待处理问题。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
+  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; pending_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> autoRefresh path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>点击「本周新增问题组」或「全部历史问题组」，查看各状态的问题组数量。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传的资料解析后自动发布，系统会在后台复测相关待处理问题。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待解决问题组：{d.pending_issue_groups} 组</p><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
   if (section === 'weekly' || section === 'history') return <><div className="filter-bar"><button className={section === 'weekly' ? 'primary' : 'secondary'} onClick={() => navigate('weekly')}>本周新增问题组</button><button className={section === 'history' ? 'primary' : 'secondary'} onClick={() => navigate('history')}>全部历史问题组</button></div>{section === 'weekly' ? <WeeklyPage/> : <IssueHistory/>}</>
   if (section === 'knowledge') return <KnowledgePage/>
   if (section === 'events') return <EventsPage/>
@@ -381,7 +401,7 @@ function IssueHistory() {
   const [state, setState] = useState('')
   const [keyword, setKeyword] = useState('')
   const [search, setSearch] = useState('')
-  return <><form className="filter-bar" onSubmit={e => { e.preventDefault(); setSearch(keyword) }}><Search size={17}/><input aria-label="搜索问题或人员" placeholder="问题、姓名或手机号" value={keyword} onChange={e => setKeyword(e.target.value)}/><select aria-label="原因筛选" value={reason} onChange={e => setReason(e.target.value)}><option value="">全部原因</option>{reasons.map(r => <option key={r} value={r}>{label[r]}</option>)}</select><select aria-label="状态筛选" value={state} onChange={e => setState(e.target.value)}><option value="">全部状态</option>{states.map(s => <option key={s} value={s}>{label[s]}</option>)}</select><button className="secondary">查询</button></form><Load<Issue[]> path={'/admin/issues?' + new URLSearchParams({ reason, state, keyword: search })}>{(items, reload) => <><IssueStatusSummary title={reason || state || search ? '当前筛选结果' : '全部历史问题组'} items={items}/><IssueList items={items} reload={reload}/></>}</Load></>
+  return <><form className="filter-bar" onSubmit={e => { e.preventDefault(); setSearch(keyword) }}><Search size={17}/><input aria-label="搜索问题或人员" placeholder="问题、姓名或手机号" value={keyword} onChange={e => setKeyword(e.target.value)}/><select aria-label="原因筛选" value={reason} onChange={e => setReason(e.target.value)}><option value="">全部原因</option>{reasons.map(r => <option key={r} value={r}>{label[r]}</option>)}</select><select aria-label="状态筛选" value={state} onChange={e => setState(e.target.value)}><option value="">全部状态</option>{states.map(s => <option key={s} value={s}>{label[s]}</option>)}</select><button className="secondary">查询</button></form><Load<Issue[]> autoRefresh path={'/admin/issues?' + new URLSearchParams({ reason, state, keyword: search })}>{(items, reload) => <><IssueStatusSummary title={reason || state || search ? '当前筛选结果' : '全部历史问题组'} items={items}/><IssueList items={items} reload={reload}/></>}</Load></>
 }
 
 function IssueList({ items, reload }: { items: Issue[]; reload: () => void }) { return items.length ? <div className="issue-list">{items.map(i => <IssueCard key={i.id} issue={i} siblings={items} reload={reload}/>)}</div> : <Empty text="没有符合条件的问题。"/> }
@@ -397,7 +417,7 @@ function IssueCard({ issue, siblings, reload }: { issue: Issue; siblings: Issue[
 
 function WeeklyPage() {
   const [day, setDay] = useState('')
-  return <><div className="filter-bar"><Field title="选择历史周内任意日期"><input aria-label="周报日期" type="date" value={day} onChange={e => setDay(e.target.value)}/></Field><p className="muted">北京时间每周一 09:00 发送上周新增问题。</p></div><Load<Weekly> path={'/admin/weekly' + (day ? '?day=' + day : '')}>{(w, reload) => <><p className="week-range">{stamp(w.start)} — {stamp(w.end)}（结束时间不含）</p><p className="muted">该周邮件 · {w.mail_enabled ? (label[w.weekly_mail?.status ?? ''] ?? '尚未入批次') : '已停用'}{w.weekly_mail?.sent_at ? ' · ' + stamp(w.weekly_mail.sent_at) : ''}</p><div className="tag-row">{Object.entries(w.counts.by_reason).map(([k, n]) => <span className="tag" key={k}>{label[k]} {n}</span>)}</div><IssueStatusSummary title={day ? '所选周新增问题组' : '本周新增问题组'} items={w.new}/><IssueList items={w.new} reload={reload}/></>}</Load></>
+  return <><div className="filter-bar"><Field title="选择历史周内任意日期"><input aria-label="周报日期" type="date" value={day} onChange={e => setDay(e.target.value)}/></Field><p className="muted">北京时间每周一 09:00 发送上周新增问题。</p></div><Load<Weekly> autoRefresh path={'/admin/weekly' + (day ? '?day=' + day : '')}>{(w, reload) => <><p className="week-range">{stamp(w.start)} — {stamp(w.end)}（结束时间不含）</p><p className="muted">该周邮件 · {w.mail_enabled ? (label[w.weekly_mail?.status ?? ''] ?? '尚未入批次') : '已停用'}{w.weekly_mail?.sent_at ? ' · ' + stamp(w.weekly_mail.sent_at) : ''}</p><div className="tag-row">{Object.entries(w.counts.by_reason).map(([k, n]) => <span className="tag" key={k}>{label[k]} {n}</span>)}</div><IssueStatusSummary title={day ? '所选周新增问题组' : '本周新增问题组'} items={w.new}/><IssueList items={w.new} reload={reload}/></>}</Load></>
 }
 
 function KnowledgePage() {

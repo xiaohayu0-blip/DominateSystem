@@ -16,6 +16,12 @@ STOP = set("的了是在有与和及或请问可以如何怎么什么哪些多�
 SYNONYMS = {"综测": "综合测评", "奖助": "奖学金", "缓考": "延期考试"}
 GENERIC = {"演示", "合成", "申请", "请材", "材料", "包括", "需要", "条件", "流程", "提交", "时间", "办理",
            "如何", "什么", "哪些", "办法", "规定", "说明", "学生", "学院", "制度", "要求", "咨询"}
+ENLISTMENT_ELIGIBILITY = re.compile(
+    r"(?:请问\s*)?(?:报名)?(?:应征入伍|征兵入伍|入伍|参军|当兵|征兵)"
+    r"(?:的)?(?:要|需要|有|有什么|有哪些)?(?:满足)?(?:哪些|什么|啥)?"
+    r"(?:基本)?(?:条件|要求|门槛|资格)(?:是(?:什么|啥)|有(?:哪些|什么))?[。！？?]?"
+)
+ENLISTMENT_TOPIC = "应征入伍基本条件"
 
 
 def terms(text: str) -> set[str]:
@@ -71,6 +77,9 @@ class Retriever(Protocol):
 
 class HybridRetriever:
     def search(self, db: Session, text: str, context: dict):
+        is_enlistment_eligibility = bool(ENLISTMENT_ELIGIBILITY.fullmatch(text.strip()))
+        if is_enlistment_eligibility:
+            text = ENLISTMENT_TOPIC
         use_bge = settings().embedding_mode == "bge"
         qterms = terms(text)
         qvector = embed_query(text) if use_bge else vector(text)
@@ -123,6 +132,8 @@ class HybridRetriever:
             semantic = sum(a * b for a, b in zip(qvector, embedding))
             bge_weight = 0.6 if use_bge else 0.2
             score = lexical * (1 - bge_weight) + max(semantic, 0) * bge_weight
+            if is_enlistment_eligibility and ENLISTMENT_TOPIC in chunk.text:
+                score += 0.25
             if (doc.admission_year or cohorts) and admission is None:
                 grade_missing = True
                 if points:
