@@ -421,6 +421,7 @@ function WeeklyPage() {
 }
 
 function KnowledgePage() {
+  const uploadLimitMb = 15
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const [generation, setGeneration] = useState(0)
@@ -429,12 +430,19 @@ function KnowledgePage() {
   async function upload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const form = e.currentTarget
+    const data = new FormData(form)
+    const file = data.get('file')
+    if (file instanceof File && file.size > uploadLimitMb * 1024 ** 2) {
+      setNotice('')
+      setError(new Error(`所选文件为 ${(file.size / 1024 ** 2).toFixed(1)} MB，超过单次上传限制 ${uploadLimitMb} MB。请压缩或拆分后上传。`))
+      return
+    }
     setBusy(true)
     setError(null)
     setNotice('')
     try {
       const result = await api<Doc | { documents: Pick<Doc, 'id' | 'status' | 'parse_status'>[]; skipped: number }>(
-        '/admin/documents/upload', 'POST', new FormData(form))
+        '/admin/documents/upload', 'POST', data)
       if ('documents' in result) {
         const published = result.documents.filter(doc => doc.status === 'published').length
         setNotice(`已自动发布 ${published} 份，${result.documents.length - published} 份待检查，跳过 ${result.skipped} 个不支持的条目。`)
