@@ -26,7 +26,7 @@ from .security import (admin, audit, hash_password, issue_session, token_hash,
                        user, verify_password)
 from .services import (ensure_evidence, finish_question, issue_data, profile,
                        resolve_issues_after_publish, retest_issue, weekly)
-from .storage import digest, parse_file, store, unpack_documents, validate_file
+from .storage import digest, infer_business_year, parse_file, store, unpack_documents, validate_file
 
 logger = logging.getLogger("dominate")
 limits: dict[str, deque] = defaultdict(deque)
@@ -433,6 +433,8 @@ def parse_document(db, document):
     try:
         parts, note = parse_file(store.path(document.storage_key))
         build_chunks(db, document, parts)
+        if document.business_year is None:
+            document.business_year = infer_business_year(document.original_name, parts[0][1])
         document.parse_status, document.parse_note = "ready", note
     except Exception as exc:
         document.parse_status = "failed"
@@ -445,7 +447,8 @@ def documents(actor=Depends(admin), db: DBSession = Depends(get_db)):
 
 
 @app.post("/api/admin/documents/upload")
-def upload(file: UploadFile = File(...), actor=Depends(admin), db: DBSession = Depends(get_db)):
+def upload(tasks: BackgroundTasks, file: UploadFile = File(...), actor=Depends(admin),
+           db: DBSession = Depends(get_db)):
     raw = file.file.read(settings().max_upload_mb * 1024**2 + 1)
     name = (file.filename or "upload").replace("\\", "/").split("/")[-1][:255]
     batch = name.lower().endswith(".zip")
@@ -454,7 +457,7 @@ def upload(file: UploadFile = File(...), actor=Depends(admin), db: DBSession = D
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     saved_keys = []
-    drafts = []
+    imported = []
     try:
         for name, content, suffix in files:
             key = store.save(content, suffix)
@@ -464,17 +467,24 @@ def upload(file: UploadFile = File(...), actor=Depends(admin), db: DBSession = D
             db.add(d)
             db.flush()
             parse_document(db, d)
+            if d.parse_status == "ready" and not d.parse_note:
+                d.status = "published"
+                audit(db, actor, "document_publish", d.id, automatic=True)
             audit(db, actor, "document_upload", d.id, parse_status=d.parse_status)
-            drafts.append(d)
+            imported.append(d)
         db.commit()
     except Exception:
         db.rollback()
         for key in saved_keys:
             store.path(key).unlink(missing_ok=True)
         raise
+    for d in imported:
+        if d.status == "published":
+            tasks.add_task(resolve_issues_after_publish, d.id, actor.id)
     if batch:
-        return {"documents": [{"id": d.id, "parse_status": d.parse_status} for d in drafts], "skipped": skipped}
-    return document_data(db, drafts[0])
+        return {"documents": [{"id": d.id, "status": d.status, "parse_status": d.parse_status}
+                              for d in imported], "skipped": skipped}
+    return document_data(db, imported[0])
 
 
 @app.post("/api/admin/documents/formal")
@@ -501,13 +511,18 @@ def metadata(document_id: str, data: DocumentMeta, actor=Depends(admin), db: DBS
 
 
 @app.post("/api/admin/documents/{document_id}/retry")
-def parse_retry(document_id: str, actor=Depends(admin), db: DBSession = Depends(get_db)):
+def parse_retry(document_id: str, tasks: BackgroundTasks, actor=Depends(admin), db: DBSession = Depends(get_db)):
     d = required(db, m.Document, document_id)
     if not d.storage_key or d.status == "published":
         raise HTTPException(422, "只能重试未发布的原始文件")
     parse_document(db, d)
+    if d.status == "draft" and d.parse_status == "ready" and not d.parse_note:
+        d.status = "published"
+        audit(db, actor, "document_publish", d.id, automatic=True)
     audit(db, actor, "parse_retry", d.id)
     db.commit()
+    if d.status == "published":
+        tasks.add_task(resolve_issues_after_publish, d.id, actor.id)
     return document_data(db, d)
 
 
@@ -519,8 +534,8 @@ def publication(document_id: str, action: str, tasks: BackgroundTasks, actor=Dep
     d = required(db, m.Document, document_id)
     chunks = list(db.scalars(select(m.Chunk).where(m.Chunk.document_id == d.id)))
     if action == "publish":
-        if d.parse_status != "ready" or not chunks or not d.publisher:
-            raise HTTPException(422, "发布前需要成功解析的正文和发布单位")
+        if d.parse_status != "ready" or not chunks:
+            raise HTTPException(422, "发布前需要成功解析的正文")
         if settings().embedding_mode == "bge" and any(c.bge_vector is None for c in chunks):
             index_bge([(c, d) for c in chunks])
         d.status = "published"

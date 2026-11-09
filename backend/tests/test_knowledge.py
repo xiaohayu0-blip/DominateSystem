@@ -189,14 +189,15 @@ def test_upload_validation_retry_and_file_permission(admin_client):
     assert c.post(f'/api/admin/documents/{damaged["id"]}/retry').json()["parse_status"] == "failed"
     uploaded = c.post("/api/admin/documents/upload", files={"file": ("../../escape.csv", "奖学金,申请表\n".encode())}).json()
     assert uploaded["original_name"] == "escape.csv" and uploaded["parse_status"] == "ready"
-    assert uploaded["status"] == "draft" and "storage_key" not in uploaded
+    assert uploaded["status"] == "published" and "storage_key" not in uploaded
+    assert uploaded["publisher"] == "" and uploaded["business_year"] is None
     c.post("/api/admin/logout")
     assert c.get(f'/api/admin/documents/{uploaded["id"]}/file').status_code == 401
     with pytest.raises(ValueError):
         store.path("../escape")
 
 
-def test_pptx_and_zip_upload_create_locatable_drafts(admin_client):
+def test_pptx_and_zip_upload_publish_locatable_documents(admin_client):
     presentation = io.BytesIO()
     with zipfile.ZipFile(presentation, "w") as deck:
         deck.writestr("ppt/presentation.xml", """
@@ -215,10 +216,11 @@ def test_pptx_and_zip_upload_create_locatable_drafts(admin_client):
                 <p:sp><p:txBody><a:p><a:r><a:t>奖学金申请表</a:t></a:r></a:p></p:txBody></p:sp>
             </p:sld>""")
     c = admin_client
-    response = c.post("/api/admin/documents/upload", files={"file": ("说明.pptx", presentation.getvalue())})
+    response = c.post("/api/admin/documents/upload", files={"file": ("2024年说明.pptx", presentation.getvalue())})
     assert response.status_code == 200
     doc = response.json()
-    assert doc["parse_status"] == "ready" and doc["status"] == "draft"
+    assert doc["parse_status"] == "ready" and doc["status"] == "published"
+    assert doc["business_year"] == 2024 and doc["publisher"] == ""
     assert doc["chunks"][0]["location"].startswith("第1页幻灯片")
     assert doc["chunks"][0]["text"] == "奖学金申请表"
 
@@ -231,7 +233,7 @@ def test_pptx_and_zip_upload_create_locatable_drafts(admin_client):
     assert response.status_code == 200
     result = response.json()
     assert len(result["documents"]) == 2 and result["skipped"] == 1
-    assert all(doc["parse_status"] == "ready" for doc in result["documents"])
+    assert all(doc["status"] == "published" for doc in result["documents"])
 
     unsafe = io.BytesIO()
     with zipfile.ZipFile(unsafe, "w") as archive:

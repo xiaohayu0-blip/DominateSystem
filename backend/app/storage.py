@@ -1,6 +1,7 @@
 import hashlib
 import io
 import posixpath
+import re
 import stat
 import subprocess
 import tempfile
@@ -38,6 +39,13 @@ store = LocalFileStore()
 DOCUMENT_SUFFIXES = {".pdf", ".docx", ".xlsx", ".csv", ".pptx"}
 OFFICE_MARKERS = {".docx": "word/document.xml", ".xlsx": "xl/workbook.xml",
                   ".pptx": "ppt/presentation.xml"}
+
+
+def infer_business_year(filename: str, heading: str = "") -> int | None:
+    years = set(re.findall(r"(?<!\d)(20\d{2})(?!\d)", Path(filename).stem))
+    if not years:
+        years = set(re.findall(r"(?<!\d)(20\d{2})\s*(?:年(?!级|入学)|版)", heading.split("\n", 1)[0][:100]))
+    return int(years.pop()) if len(years) == 1 else None
 
 
 def validate_file(name: str, data: bytes) -> str:
