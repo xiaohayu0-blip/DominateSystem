@@ -40,6 +40,7 @@ store = LocalFileStore()
 DOCUMENT_SUFFIXES = {".pdf", ".docx", ".xlsx", ".csv", ".pptx"}
 OFFICE_MARKERS = {".docx": "word/document.xml", ".xlsx": "xl/workbook.xml",
                   ".pptx": "ppt/presentation.xml"}
+MAX_EXPANDED_MB = 160
 
 
 def infer_business_year(filename: str, heading: str = "") -> int | None:
@@ -60,7 +61,7 @@ def validate_file(name: str, data: bytes) -> str:
     if suffix in OFFICE_MARKERS:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
-                if len(z.infolist()) > 10000 or sum(i.file_size for i in z.infolist()) > 80 * 1024**2:
+                if len(z.infolist()) > 10000 or sum(i.file_size for i in z.infolist()) > MAX_EXPANDED_MB * 1024**2:
                     raise ValueError("压缩文档展开超过限制")
                 marker = OFFICE_MARKERS[suffix]
                 if marker not in z.namelist() or any(i.flag_bits & 1 for i in z.infolist()):
@@ -81,8 +82,8 @@ def unpack_documents(data: bytes):
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             entries = archive.infolist()
-            if len(entries) > 200 or sum(entry.file_size for entry in entries) > 60 * 1024**2:
-                raise ValueError("ZIP 展开后超过 200 个条目或 60 MB")
+            if len(entries) > 200 or sum(entry.file_size for entry in entries) > MAX_EXPANDED_MB * 1024**2:
+                raise ValueError(f"ZIP 展开后超过 200 个条目或 {MAX_EXPANDED_MB} MB")
             for entry in entries:
                 path = PurePosixPath(entry.filename.replace("\\", "/"))
                 if (path.is_absolute() or ".." in path.parts or ":" in entry.filename

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     mail_max_attempts: int = 4
     session_hours: int = 24
     admin_hours: int = 8
-    max_upload_mb: int = 50
+    max_upload_mb: int = 80
     ocr_enabled: bool = False
     ocr_language: str = "chi_sim+eng"
     ocr_timeout_seconds: int = 30
