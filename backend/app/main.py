@@ -26,7 +26,7 @@ from .security import (admin, audit, hash_password, issue_session, token_hash,
                        user, verify_password)
 from .services import (ensure_evidence, finish_question, issue_data, profile,
                        resolve_issues_after_publish, retest_issue, weekly)
-from .storage import digest, parse_file, store, validate_file
+from .storage import digest, parse_file, store, unpack_documents, validate_file
 
 logger = logging.getLogger("dominate")
 limits: dict[str, deque] = defaultdict(deque)
@@ -448,19 +448,33 @@ def documents(actor=Depends(admin), db: DBSession = Depends(get_db)):
 def upload(file: UploadFile = File(...), actor=Depends(admin), db: DBSession = Depends(get_db)):
     raw = file.file.read(settings().max_upload_mb * 1024**2 + 1)
     name = (file.filename or "upload").replace("\\", "/").split("/")[-1][:255]
+    batch = name.lower().endswith(".zip")
     try:
-        suffix = validate_file(name, raw)
+        files, skipped = unpack_documents(raw) if batch else ([(name, raw, validate_file(name, raw))], 0)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
-    key = store.save(raw, suffix)
-    d = m.Document(title=name[:200], original_name=name, storage_key=key, content_hash=digest(raw),
-                   material_mode=settings().material_mode)
-    db.add(d)
-    db.flush()
-    parse_document(db, d)
-    audit(db, actor, "document_upload", d.id, parse_status=d.parse_status)
-    db.commit()
-    return document_data(db, d)
+    saved_keys = []
+    drafts = []
+    try:
+        for name, content, suffix in files:
+            key = store.save(content, suffix)
+            saved_keys.append(key)
+            d = m.Document(title=name[:200], original_name=name, storage_key=key, content_hash=digest(content),
+                           material_mode=settings().material_mode)
+            db.add(d)
+            db.flush()
+            parse_document(db, d)
+            audit(db, actor, "document_upload", d.id, parse_status=d.parse_status)
+            drafts.append(d)
+        db.commit()
+    except Exception:
+        db.rollback()
+        for key in saved_keys:
+            store.path(key).unlink(missing_ok=True)
+        raise
+    if batch:
+        return {"documents": [{"id": d.id, "parse_status": d.parse_status} for d in drafts], "skipped": skipped}
+    return document_data(db, drafts[0])
 
 
 @app.post("/api/admin/documents/formal")

@@ -408,8 +408,31 @@ function KnowledgePage() {
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const [generation, setGeneration] = useState(0)
-  async function upload(e: FormEvent<HTMLFormElement>) { e.preventDefault(); setBusy(true); setError(null); const data = new FormData(e.currentTarget); try { await api('/admin/documents/upload', 'POST', data); setGeneration(x => x + 1) } catch (e) { setError(e) } finally { setBusy(false) } }
-  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析。核对资料并发布后，大模型即可用它回答学生的问题。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pdf,.docx,.xlsx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传与解析…' : '上传资料'}</button></form><small>支持PDF / DOCX / XLSX / CSV，单份≤15MB。扫描件需配置OCR并人工核对。</small></div><ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentEditor key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
+  const [notice, setNotice] = useState('')
+
+  async function upload(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const form = e.currentTarget
+    setBusy(true)
+    setError(null)
+    setNotice('')
+    try {
+      const result = await api<Doc | { documents: Pick<Doc, 'id' | 'parse_status'>[]; skipped: number }>(
+        '/admin/documents/upload', 'POST', new FormData(form))
+      if ('documents' in result) {
+        const failed = result.documents.filter(doc => doc.parse_status !== 'ready').length
+        setNotice(`已导入 ${result.documents.length} 份草稿，${failed} 份解析失败，跳过 ${result.skipped} 个不支持的条目。`)
+      }
+      form.reset()
+      setGeneration(x => x + 1)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析。核对资料并发布后，大模型即可用它回答学生的问题。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pptx,.xlsx,.zip,.pdf,.docx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传与解析…' : '上传资料'}</button></form><small>支持 PPTX / XLSX / ZIP / PDF / DOCX / CSV，单次上传不超过 15 MB。ZIP 最多导入 20 份资料。PDF 扫描件需配置 OCR。</small></div>{notice && <p role="status">{notice}</p>}<ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentEditor key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
 }
 
 function DocumentEditor({ document: d, reload }: { document: Doc; reload: () => void }) {

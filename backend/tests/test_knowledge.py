@@ -1,5 +1,6 @@
 import io
 import uuid
+import zipfile
 
 import pytest
 from sqlalchemy import select
@@ -190,6 +191,51 @@ def test_upload_validation_retry_and_file_permission(admin_client):
     assert c.get(f'/api/admin/documents/{uploaded["id"]}/file').status_code == 401
     with pytest.raises(ValueError):
         store.path("../escape")
+
+
+def test_pptx_and_zip_upload_create_locatable_drafts(admin_client):
+    presentation = io.BytesIO()
+    with zipfile.ZipFile(presentation, "w") as deck:
+        deck.writestr("ppt/presentation.xml", """
+            <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                <p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>
+            </p:presentation>""")
+        deck.writestr("ppt/_rels/presentation.xml.rels", """
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
+                    Target="slides/slide2.xml"/>
+            </Relationships>""")
+        deck.writestr("ppt/slides/slide2.xml", """
+            <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                <p:sp><p:txBody><a:p><a:r><a:t>奖学金申请表</a:t></a:r></a:p></p:txBody></p:sp>
+            </p:sld>""")
+    c = admin_client
+    response = c.post("/api/admin/documents/upload", files={"file": ("说明.pptx", presentation.getvalue())})
+    assert response.status_code == 200
+    doc = response.json()
+    assert doc["parse_status"] == "ready" and doc["status"] == "draft"
+    assert doc["chunks"][0]["location"].startswith("第1页幻灯片")
+    assert doc["chunks"][0]["text"] == "奖学金申请表"
+
+    batch = io.BytesIO()
+    with zipfile.ZipFile(batch, "w") as archive:
+        archive.writestr("制度/说明.pptx", presentation.getvalue())
+        archive.writestr("资料.csv", "奖学金,成绩单")
+        archive.writestr("readme.txt", "ignored")
+    response = c.post("/api/admin/documents/upload", files={"file": ("批量.zip", batch.getvalue())})
+    assert response.status_code == 200
+    result = response.json()
+    assert len(result["documents"]) == 2 and result["skipped"] == 1
+    assert all(doc["parse_status"] == "ready" for doc in result["documents"])
+
+    unsafe = io.BytesIO()
+    with zipfile.ZipFile(unsafe, "w") as archive:
+        archive.writestr("正常.csv", "制度,正文")
+        archive.writestr("../越界.csv", "制度,正文")
+    assert c.post("/api/admin/documents/upload", files={"file": ("越界.zip", unsafe.getvalue())}).status_code == 422
+    assert len(c.get("/api/admin/documents").json()) == 3
 
 
 @pytest.mark.parametrize("format", ["docx", "xlsx", "csv", "pdf"])
