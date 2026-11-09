@@ -285,7 +285,14 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
     for (let i = 0; i < 80; i++) {
       const q = await api<Question>('/questions/' + id)
       setQuestions(old => old.map(x => x.id === q.id ? q : x))
-      if (q.status === 'complete') { setUnresolved(null); return }
+      if (q.status === 'complete') {
+        const context = q.answer.context
+        if (context?.followup_question || (year && context && context.business_year !== Number(year))) {
+          setYear(String(context.business_year))
+        }
+        setUnresolved(null)
+        return
+      }
       await new Promise(r => setTimeout(r, 750))
     }
     throw new Error('问题已保存，回答仍在处理。可点击“检查回答状态”，请勿重复提交。')
@@ -299,8 +306,6 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
         previous_id: follow && questions.length ? questions[questions.length - 1].id : null })
       if (window.matchMedia('(max-width: 760px)').matches) composerRef.current?.querySelector('textarea')?.blur()
       setQuestions(old => old.some(x => x.id === q.id) ? old : [...old, q]); setUnresolved(q.id)
-      const followupYear = follow && questions.length && draft.trim().match(/^(?:那么|那|换成|如果是)?\s*(20\d{2})\s*年(?:度)?(?:的话|呢|怎么办|是多少|加几分|加多少分)?[？?。]?$/)
-      if (followupYear) setYear(followupYear[1])
       setDraft(''); setRequestId(newRequestId()); setShowConditions(false); await poll(q.id)
     } catch (e) { setError(e) } finally { setBusy(false) }
   }

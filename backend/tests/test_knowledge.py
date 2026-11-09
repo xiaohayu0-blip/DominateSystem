@@ -103,6 +103,9 @@ def test_points_without_cohort_show_scoped_evidence_instead_of_scholarships(clie
     assert followed["question"] == "那2024年呢"
     assert {c["document_id"] for c in followed["citations"]} == {newer}
     assert "0.5" in followed["content"] and "0.3" not in followed["content"]
+    short = ask(client, "那24年呢。", business_year=2023, previous_id=older_question["id"])["answer"]
+    assert short["context"]["business_year"] == 2024
+    assert {c["document_id"] for c in short["items"][0]["citations"]} == {newer}
     independent = ask(client, "那2024年呢？")["answer"]["items"][0]
     assert independent["status"] == "missing_material"
     assert ask(client, "数学建模竞赛能认定多少学分？")["answer"]["items"][0]["status"] == "missing_material"
@@ -140,6 +143,22 @@ def test_deepseek_answer_separates_summary_from_source(client, monkeypatch):
     summary = "2023年综测加0.5分。"
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
     assert item["status"] == "validation_failed" and not item["citations"]
+
+
+def test_current_year_overrides_inherited_year_and_model_can_abstain(client, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    signup(client, student())
+    current_year = datetime.now(ZoneInfo("Asia/Shanghai")).year
+    previous = ask(client, "校外住宿补助", business_year=current_year - 1)
+    publish("奖学金评定办法", "申请校级奖学金要求综合素质测评成绩位于专业前30%。", year=current_year)
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    monkeypatch.setattr(DeepSeekModel, "select_evidence",
+                        lambda *_: {"answer": "资料未说明应交材料，无法回答。", "selections": []})
+    answer = ask(client, "今年申请奖学金要交什么", previous_id=previous["id"])["answer"]
+    assert answer["context"]["business_year"] == current_year
+    assert answer["items"][0]["status"] == "missing_material"
 
 
 def test_draft_disable_and_history_source(client):

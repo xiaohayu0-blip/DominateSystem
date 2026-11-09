@@ -66,22 +66,27 @@ semaphore = threading.BoundedSemaphore(settings().model_concurrency)
 
 
 YEAR_WORD = r"(20\d{2})\s*(?:年度|年)(?!级|入学)"
+FOLLOWUP_YEAR_WORD = r"(\d{2}|20\d{2})\s*(?:年度|年)"
 GRADE_WORD = r"(20\d{2})\s*(?:级|年入学)"
 AWARD_WORD = r"(?:国家|省|校|院)级[一二三]等奖"
 NUMBER = re.compile(r"\d+(?:\.\d+)?%?")
 
 
 def context_for(data, previous=None):
+    current_year = datetime.now(ZoneInfo("Asia/Shanghai")).year
     year = data.business_year
     explicit = re.search(YEAR_WORD, data.text)
     if year is None and explicit:
         year = int(explicit.group(1))
+    relative = re.search(r"(今年|去年)(?!入学)", data.text)
+    if not explicit and relative:
+        year = current_year - (relative[1] == "去年")
     admission = data.admission_year
     grade = re.search(GRADE_WORD, data.text)
     if admission is None and grade:
         admission = int(grade.group(1))
     prior = previous.context if previous else {}
-    result = {"business_year": year or prior.get("business_year") or datetime.now(ZoneInfo("Asia/Shanghai")).year,
+    result = {"business_year": year or prior.get("business_year") or current_year,
             "selected_year": year or prior.get("selected_year"),
             "admission_year": admission if year is not None else admission or prior.get("admission_year")}
     if not previous or not previous.answer.get("items"):
@@ -90,13 +95,16 @@ def context_for(data, previous=None):
     anchor = split_questions(prior.get("followup_question") or previous.text)
     if len(parts) != 1 or len(anchor) != 1:
         return result
-    short = re.sub(r"^(?:那么|那|换成|如果是)\s*", "", parts[0])
+    short = re.sub(r"^(?:那么|那|换成|如果是)\s*", "", parts[0].rstrip("。！!"))
     short = re.sub(r"\s*(?:的话|呢|怎么办|是多少|加几分|加多少分)$", "", short)
-    followup_year = re.fullmatch(YEAR_WORD, short)
+    followup_year = re.fullmatch(FOLLOWUP_YEAR_WORD, short)
     if followup_year or re.fullmatch(GRADE_WORD, short):
-        topic = re.sub(GRADE_WORD, "", re.sub(YEAR_WORD, "", anchor[0])).strip(" ，,。")
+        topic = re.sub(GRADE_WORD, "", re.sub(YEAR_WORD, "", anchor[0]))
+        topic = re.sub(r"(今年|去年)(?!入学)", "", topic).strip(" ，,。")
         if followup_year:
             chosen_year = int(followup_year[1])
+            if chosen_year < 100:
+                chosen_year += 2000
             result.update(business_year=chosen_year, selected_year=chosen_year, admission_year=None)
     elif re.fullmatch(AWARD_WORD, short) and re.search(AWARD_WORD, anchor[0]):
         topic = re.sub(AWARD_WORD, short, anchor[0], count=1)
@@ -178,6 +186,11 @@ def answer_question(db, text: str, context: dict) -> dict:
                 finally:
                     semaphore.release()
                 selections = selected.get("selections")
+                # An empty selection explicitly abstains. Never display uncited model text.
+                if isinstance(model, DeepSeekModel) and selections == []:
+                    results.append({"question": part, "status": "missing_material",
+                                    "content": MESSAGES["missing_material"], "citations": []})
+                    continue
                 if not isinstance(selections, list) or not selections:
                     raise InvalidEvidence("no_valid_evidence")
                 allowed = {x["chunk_id"]: x for x in citations}
