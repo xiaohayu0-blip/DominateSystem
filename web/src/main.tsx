@@ -368,7 +368,7 @@ function Load<T>({ path, children, autoRefresh = false }: { path: string; childr
 function AdminSection({ section, navigate }: { section: string; navigate: (s: string) => void }) {
   if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; pending_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> autoRefresh path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>点击「本周新增问题组」或「全部历史问题组」，查看各状态的问题组数量。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传的资料解析后自动发布，系统会在后台复测相关待处理问题。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待解决问题组：{d.pending_issue_groups} 组</p><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
   if (section === 'weekly' || section === 'history') return <><div className="filter-bar"><button className={section === 'weekly' ? 'primary' : 'secondary'} onClick={() => navigate('weekly')}>本周新增问题组</button><button className={section === 'history' ? 'primary' : 'secondary'} onClick={() => navigate('history')}>全部历史问题组</button></div>{section === 'weekly' ? <WeeklyPage/> : <IssueHistory/>}</>
-  if (section === 'knowledge') return <KnowledgePage/>
+  if (section === 'knowledge') return <Load<{ max_upload_mb: number }> path="/modes">{modes => <KnowledgePage uploadLimitMb={modes.max_upload_mb}/>}</Load>
   if (section === 'events') return <EventsPage/>
   if (section === 'people') return <Load<Profile[]> path="/admin/people">{data => data.length ? <div className="record-grid">{data.map((p, i) => <section className="panel" key={p.id ?? i}><ProfileView person={p}/><small>登记编号 {p.id}</small></section>)}</div> : <Empty/>}</Load>
   if (section === 'questions') return <Load<Question[]> path="/admin/questions">{data => data.length ? data.map(q => <details className="panel" key={q.id}><summary><b>{q.text}</b><small>{stamp(q.created_at)}</small></summary>{q.snapshot && <ProfileView person={q.snapshot}/>}<AnswerView answer={q.answer}/></details>) : <Empty/>}</Load>
@@ -420,8 +420,7 @@ function WeeklyPage() {
   return <><div className="filter-bar"><Field title="选择历史周内任意日期"><input aria-label="周报日期" type="date" value={day} onChange={e => setDay(e.target.value)}/></Field><p className="muted">北京时间每周一 09:00 发送上周新增问题。</p></div><Load<Weekly> autoRefresh path={'/admin/weekly' + (day ? '?day=' + day : '')}>{(w, reload) => <><p className="week-range">{stamp(w.start)} — {stamp(w.end)}（结束时间不含）</p><p className="muted">该周邮件 · {w.mail_enabled ? (label[w.weekly_mail?.status ?? ''] ?? '尚未入批次') : '已停用'}{w.weekly_mail?.sent_at ? ' · ' + stamp(w.weekly_mail.sent_at) : ''}</p><div className="tag-row">{Object.entries(w.counts.by_reason).map(([k, n]) => <span className="tag" key={k}>{label[k]} {n}</span>)}</div><IssueStatusSummary title={day ? '所选周新增问题组' : '本周新增问题组'} items={w.new}/><IssueList items={w.new} reload={reload}/></>}</Load></>
 }
 
-function KnowledgePage() {
-  const uploadLimitMb = 15
+function KnowledgePage({ uploadLimitMb }: { uploadLimitMb: number }) {
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const [generation, setGeneration] = useState(0)
@@ -458,7 +457,7 @@ function KnowledgePage() {
     }
   }
 
-  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析并发布，能识别的业务年度会自动填入。解析失败或需核对的资料会留在列表中。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pptx,.xlsx,.zip,.pdf,.docx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传与解析…' : '上传资料'}</button></form><small>支持 PPTX / XLSX / ZIP / PDF / DOCX / CSV，单次上传不超过 15 MB。ZIP 最多导入 20 份资料。含图 PPTX 和扫描 PDF 需要 OCR，识别后核对再发布。</small></div>{notice && <p role="status">{notice}</p>}<ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentEditor key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
+  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析并发布，能识别的业务年度会自动填入。解析失败或需核对的资料会留在列表中。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pptx,.xlsx,.zip,.pdf,.docx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传与解析…' : '上传资料'}</button></form><small>支持 PPTX / XLSX / ZIP / PDF / DOCX / CSV，单次上传不超过 {uploadLimitMb} MB。ZIP 最多导入 20 份资料。含图 PPTX 和扫描 PDF 需要 OCR，识别后核对再发布。</small></div>{notice && <p role="status">{notice}</p>}<ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentEditor key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
 }
 
 function DocumentEditor({ document: d, reload }: { document: Doc; reload: () => void }) {

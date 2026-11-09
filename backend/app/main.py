@@ -126,6 +126,7 @@ def health(db: DBSession = Depends(get_db)):
 def modes():
     cfg = settings()
     return {"environment": cfg.environment, "model": cfg.model_mode, "material": cfg.material_mode,
+            "max_upload_mb": cfg.max_upload_mb,
             "mail": cfg.mail_mode, "identity_verified": False,
             "embedding": BGE_MODEL if cfg.embedding_mode == "bge" else "character-hash"}
 
