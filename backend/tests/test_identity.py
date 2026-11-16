@@ -16,7 +16,7 @@ def test_account_login_requires_password_and_restores_the_same_profile(client):
     assert client.post("/api/logout").status_code == 200
     assert client.get("/api/me").status_code == 401
     assert client.post("/api/login", json={"username": "演示本人", "password": "wrong"}).status_code == 401
-    restored = client.post("/api/login", json={"username": "演示本人", "password": "test-secret-strong"})
+    restored = client.post("/api/login", json={"username": "演示本人", "password": "test-secret-strong1"})
     assert restored.status_code == 200 and restored.json()["id"] == profile_id
 
 
@@ -56,7 +56,7 @@ def test_snapshots_not_changed_by_profile_edits(client):
     changed["children"][0]["name"] = "改名孩子"
     assert client.put("/api/me", json=changed).status_code == 200
     assert client.post("/api/logout").status_code == 200
-    assert client.post("/api/login", json={"username": "改名后", "password": "test-secret-strong"}).status_code == 200
+    assert client.post("/api/login", json={"username": "改名后", "password": "test-secret-strong1"}).status_code == 200
     with SessionLocal() as db:
         assert db.get(Question, q["id"]).snapshot["name"] == "虚构家长"
         assert db.get(Question, q["id"]).snapshot["children"][0]["name"] == "虚构甲"

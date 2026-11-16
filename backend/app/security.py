@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import timedelta
 
@@ -9,6 +10,12 @@ from sqlalchemy.orm import Session as DBSession
 from .config import settings
 from .db import get_db, now
 from .models import Admin, Audit, Registration, Session, UserAccount
+
+
+def validate_new_password(password: str, minimum: int = 8) -> str:
+    if len(password) < minimum or not re.search(r"[A-Za-z]", password) or not re.search(r"[0-9]", password):
+        raise ValueError(f"密码至少{minimum}位，需同时包含英文字母和数字")
+    return password
 
 
 def hash_password(password: str) -> str:

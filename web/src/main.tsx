@@ -45,7 +45,7 @@ function invalidInputs(scope: HTMLElement) {
 function inputErrors(inputs: HTMLInputElement[]) {
   return Object.fromEntries(inputs.map(input => [input.name, input.validity.valueMissing
     ? '请填写此项'
-    : input.name === 'password' ? '密码至少 8 位'
+    : input.name === 'password' ? '密码至少8位，需同时包含英文字母和数字'
     : input.name.endsWith('phone') ? '请输入有效的 11 位手机号'
     : '请检查填写格式']))
 }
@@ -122,7 +122,7 @@ function RegistrationForm({ initial, saved, cancel }: { initial?: Profile; saved
     {!initial && <div className="segmented" aria-label="登记身份"><button type="button" aria-pressed={data.role === 'student'} onClick={() => setData({ ...data, role: 'student' })}>我是学生</button><button type="button" aria-pressed={data.role === 'parent'} onClick={() => { setData({ ...data, role: 'parent', children: data.children.length ? data.children : [blankChild()] }); if (!data.children.length) setActiveChild(0) }}>我是家长</button></div>}
     <div className="form-grid person-grid">{input(data.role === 'parent' ? '家长本人姓名' : '本人姓名', 'name')}{input('本人手机号', 'phone', true)}{data.role === 'student' && <>{input('专业', 'major')}{input('班级', 'class_name')}</>}</div>
     {!initial && <div className="form-grid person-grid">
-      <Field title="密码 *" hint={fields.password} invalid={!!fields.password}><input name="password" type="password" required minLength={8} maxLength={200} autoComplete="new-password"/></Field>
+      <Field title="密码 *" hint={fields.password ?? "密码至少8位，需同时包含英文字母和数字"} invalid={!!fields.password}><input name="password" type="password" required pattern="(?=.*[A-Za-z])(?=.*[0-9]).{8,}" minLength={8} maxLength={200} autoComplete="new-password"/></Field>
     </div>}
     {data.role === 'parent' && <div className="children-section"><div className="children-heading"><h3>孩子信息</h3><span>仅采集资料，不关联学生账号</span></div>{data.children.map((c, i) => <details className="child-card" key={i} open={activeChild === i} data-child-index={i}>
       <summary onClick={e => { e.preventDefault(); setActiveChild(activeChild === i ? null : i) }}><div><strong>孩子 {i + 1}{c.name ? ` · ${c.name}` : ''}</strong><small>{c.name && c.phone && c.major && c.class_name && c.relationship ? `${c.major} · ${c.class_name} · ${c.relationship}` : '请填写孩子的基本信息'}</small></div><span>{activeChild === i ? '收起' : c.name ? '修改' : '填写'}<ChevronRight size={15}/></span></summary>
@@ -241,7 +241,37 @@ function UserApp() {
   </div>
 }
 
-function AnswerView({ answer, open }: { answer: Answer; open?: (c: Citation) => void }) { return <>{answer.items?.map((item, i) => <section className="answer-item" key={i}><div className="answer-title"><Tag value={item.status}/><strong>{item.question}</strong></div><p className="pre-wrap">{item.content}</p>{item.citations.length > 0 && <span className="eyebrow">出处</span>}{item.citations.map(c => <button className="citation" key={c.chunk_id} onClick={() => open?.(c)} disabled={!open}><BookOpen size={16}/><span><b>{c.title}</b><small>v{c.version} · {c.location} · {c.business_year ?? '长期制度'}</small></span>{open && <ChevronRight size={16}/>}</button>)}</section>)}<p className="answer-notice">{answer.notice}</p></> }
+function AnswerView({ answer, open }: { answer: Answer; open?: (c: Citation) => void }) {
+  const sources = new Map<string, Citation>()
+  for (const item of answer.items ?? []) {
+    for (const citation of item.citations) {
+      if (!sources.has(citation.document_id)) sources.set(citation.document_id, citation)
+    }
+  }
+
+  return <>
+    {answer.items?.map((item, i) => <section className="answer-item" key={i}>
+      <div className="answer-title"><Tag value={item.status}/><strong>{item.question}</strong></div>
+      <p className="pre-wrap">{item.content}</p>
+    </section>)}
+    {sources.size > 0 && <section className="answer-item">
+      <span className="eyebrow">出处</span>
+      {Array.from(sources.values(), c => <button className="citation" key={c.document_id} onClick={() => open?.(c)} disabled={!open}>
+        <BookOpen size={16}/>
+        <span><b>{c.title}</b><small>v{c.version} · {c.business_year ?? '长期制度'}</small></span>
+        {open && <ChevronRight size={16}/>}
+      </button>)}
+    </section>}
+    <p className="answer-notice">{answer.notice}</p>
+  </>
+}
+
+const progressText = {
+  received: '收到问题啦',
+  searching: '正在查找学院资料',
+  checking: '正在核对适用年级',
+  composing: '正在整理回答',
+}
 
 function newRequestId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16))
@@ -282,7 +312,7 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
     return () => observer.disconnect()
   }, [])
   async function poll(id: string) {
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 240; i++) {
       const q = await api<Question>('/questions/' + id)
       setQuestions(old => old.map(x => x.id === q.id ? q : x))
       if (q.status === 'complete') {
@@ -300,17 +330,20 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
   async function submit(e: FormEvent) {
     e.preventDefault(); if (!draft.trim() || busy) return
     setBusy(true); setError(null)
+    const optimisticId = 'local-' + requestId
+    setQuestions(old => [...old, { id: optimisticId, text: draft, status: 'pending',
+      answer: { items: [] }, progress: 'received', created_at: new Date().toISOString(), alert: null }])
     try {
       const q = await api<Question>('/questions', 'POST', { request_id: requestId, text: draft,
         business_year: year ? Number(year) : null,
         previous_id: follow && questions.length ? questions[questions.length - 1].id : null })
       if (window.matchMedia('(max-width: 760px)').matches) composerRef.current?.querySelector('textarea')?.blur()
-      setQuestions(old => old.some(x => x.id === q.id) ? old : [...old, q]); setUnresolved(q.id)
-      setDraft(''); setRequestId(newRequestId()); setShowConditions(false); await poll(q.id)
-    } catch (e) { setError(e) } finally { setBusy(false) }
+      setQuestions(old => [...old.filter(x => x.id !== optimisticId && x.id !== q.id), q]); setUnresolved(q.id)
+      setDraft(''); setRequestId(newRequestId()); setShowConditions(false); if (!q.alert) await poll(q.id); else setUnresolved(null)
+    } catch (e) { setQuestions(old => old.filter(x => x.id !== optimisticId)); setError(e) } finally { setBusy(false) }
   }
   async function open(c: Citation) { try { setSource(await api<Citation>('/sources/' + c.chunk_id)) } catch (e) { setError(e) } }
-  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>制度咨询</h1><p className="chat-description">查询条文依据与办理要求。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可询问办理条件、时间及制度依据。可在问题中注明业务年度。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><BookOpen size={18}/><b>制度问答</b><span>依据已发布资料回答</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><BookOpen size={30}/></span><h2>请输入需要了解的制度事项</h2><p>请说明具体事项，便于查找适用制度。</p><div className="suggestions"><span className="suggestion-label">提问示例</span>{['2026年度奖学金申请需要哪些材料？', '2026年度请假流程是什么？', '校外实习补贴如何申请？'].map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div></div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><span className="eyebrow">制度答复 · {stamp(q.created_at)}</span>{q.status === 'pending' ? <p className="loading">问题已保存，正在检索与整理依据…</p> : <AnswerView answer={q.answer} open={open}/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>承接上次提问条件</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="请输入你的制度问题…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? '正在处理，请稍候…' : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <div className="modal-backdrop" onClick={() => setSource(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="引用来源" onClick={e => e.stopPropagation()}><button className="close" aria-label="关闭来源" onClick={() => setSource(null)} autoFocus><X/></button><span className="eyebrow">引用来源 / 原文摘录</span><h2>{source.title}</h2><p>{source.publisher ? source.publisher + ' · ' : ''}版本 {source.version} · {source.location}</p><div className="meta-strip">业务年度 {source.business_year ?? '长期'} / 入学年级 {source.admission_year ?? '不限'}<br/>有效期 {source.effective_from ?? '未限定'} 至 {source.effective_to ?? '未限定'}</div>{source.source_status !== 'published' && <p className="error">该版本已停用或不可用，以下为当时引用。</p>}<blockquote>{source.excerpt}</blockquote><small>仅展示你已引用的原文片段。完整附件由管理员审核访问。</small><button className="secondary" onClick={() => setSource(null)}>返回问答</button></section></div>}</main>
+  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>制度咨询</h1><p className="chat-description">查询条文依据与办理要求。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可询问办理条件、时间及制度依据。可在问题中注明业务年度。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><BookOpen size={18}/><b>制度问答</b><span>依据已发布资料回答</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><BookOpen size={30}/></span><h2>请输入需要了解的制度事项</h2><p>请说明具体事项，便于查找适用制度。</p><div className="suggestions"><span className="suggestion-label">提问示例</span>{['2026年度奖学金申请需要哪些材料？', '2026年度请假流程是什么？', '校外实习补贴如何申请？'].map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div></div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><span className="eyebrow">制度答复 · {stamp(q.created_at)}</span>{q.status === 'pending' ? <p className="loading" role="status">{progressText[q.progress ?? 'received']}</p> : <AnswerView answer={q.answer} open={open}/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>承接上次提问条件</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="请输入你的制度问题…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? null : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <div className="modal-backdrop" onClick={() => setSource(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="引用来源" onClick={e => e.stopPropagation()}><button className="close" aria-label="关闭来源" onClick={() => setSource(null)} autoFocus><X/></button><span className="eyebrow">引用来源 / 原文摘录</span><h2>{source.title}</h2><p>{source.publisher ? source.publisher + ' · ' : ''}版本 {source.version}</p><div className="meta-strip">业务年度 {source.business_year ?? '长期'} / 入学年级 {source.admission_year ?? '不限'}<br/>有效期 {source.effective_from ?? '未限定'} 至 {source.effective_to ?? '未限定'}</div>{source.source_status !== 'published' && <p className="error">该版本已停用或不可用，以下为当时引用。</p>}<blockquote>{source.excerpt}</blockquote><small>仅展示你已引用的原文片段。完整附件由管理员审核访问。</small><button className="secondary" onClick={() => setSource(null)}>返回问答</button></section></div>}</main>
 }
 
 const sections = [
@@ -366,7 +399,7 @@ function Load<T>({ path, children, autoRefresh = false }: { path: string; childr
 }
 
 function AdminSection({ section, navigate }: { section: string; navigate: (s: string) => void }) {
-  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; pending_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> autoRefresh path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>点击「本周新增问题组」或「全部历史问题组」，查看各状态的问题组数量。</p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong><ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传的资料解析后自动发布，系统会在后台复测相关待处理问题。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待解决问题组：{d.pending_issue_groups} 组</p><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
+  if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; pending_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> autoRefresh path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>当前待解决问题组 <strong>{d.pending_issue_groups} 组</strong></p></div></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong>{(target === 'weekly' || target === 'history') && <span>含已解决记录</span>}<ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传的资料解析后自动发布，系统会在后台复测相关待处理问题。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
   if (section === 'weekly' || section === 'history') return <><div className="filter-bar"><button className={section === 'weekly' ? 'primary' : 'secondary'} onClick={() => navigate('weekly')}>本周新增问题组</button><button className={section === 'history' ? 'primary' : 'secondary'} onClick={() => navigate('history')}>全部历史问题组</button></div>{section === 'weekly' ? <WeeklyPage/> : <IssueHistory/>}</>
   if (section === 'knowledge') return <Load<{ max_upload_mb: number }> path="/modes">{modes => <KnowledgePage uploadLimitMb={modes.max_upload_mb}/>}</Load>
   if (section === 'events') return <EventsPage/>
@@ -444,9 +477,9 @@ function KnowledgePage({ uploadLimitMb }: { uploadLimitMb: number }) {
         '/admin/documents/upload', 'POST', data)
       if ('documents' in result) {
         const published = result.documents.filter(doc => doc.status === 'published').length
-        setNotice(`已自动发布 ${published} 份，${result.documents.length - published} 份待检查，跳过 ${result.skipped} 个不支持的条目。`)
+        setNotice(`已自动发布 ${published} 份，${result.documents.length - published} 份处理失败，跳过 ${result.skipped} 个不支持的条目。`)
       } else {
-        setNotice(result.status === 'published' ? '资料已自动发布，可以提问测试。' : '资料暂未发布，请查看解析结果。')
+        setNotice(result.status === 'published' ? '资料已自动发布，可以提问测试。' : (result.parse_note || '资料处理失败，请检查文件后重新上传。'))
       }
       form.reset()
       setGeneration(x => x + 1)
@@ -457,15 +490,15 @@ function KnowledgePage({ uploadLimitMb }: { uploadLimitMb: number }) {
     }
   }
 
-  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析并发布，能识别的业务年度会自动填入。解析失败或需核对的资料会留在列表中。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pptx,.xlsx,.zip,.pdf,.docx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传与解析…' : '上传资料'}</button></form><small>支持 PPTX / XLSX / ZIP / PDF / DOCX / CSV，单次上传不超过 {uploadLimitMb} MB。ZIP 最多导入 20 份资料。含图 PPTX 和扫描 PDF 需要 OCR，识别后核对再发布。</small></div>{notice && <p role="status">{notice}</p>}<ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentEditor key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
+  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析并发布，能识别的业务年度会自动填入。上传结果会显示处理状态。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pptx,.xlsx,.zip,.pdf,.docx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传、识别与发布…' : '上传资料'}</button></form><small>支持 PPTX / XLSX / ZIP / PDF / DOCX / CSV，单次上传不超过 {uploadLimitMb} MB。ZIP 最多导入 20 份资料。自动识别扫描页及文档内的图片文字，处理成功后直接发布。</small></div>{notice && <p role="status">{notice}</p>}<ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{docs => docs.length ? docs.map(d => <DocumentCard key={d.id} document={d}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
 }
 
-function DocumentEditor({ document: d, reload }: { document: Doc; reload: () => void }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<unknown>(null)
-  async function action(action: string) { setBusy(true); setError(null); try { await api(`/admin/documents/${d.id}/${action}`, 'POST'); reload() } catch (e) { setError(e) } finally { setBusy(false) } }
-  async function metadata(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const f = new FormData(e.currentTarget); const payload = Object.fromEntries(f); setBusy(true); setError(null); try { await api(`/admin/documents/${d.id}`, 'PUT', { ...payload, publisher: d.publisher, business_year: payload.business_year ? Number(payload.business_year) : null, admission_year: payload.admission_year ? Number(payload.admission_year) : null, effective_from: payload.effective_from || null, effective_to: payload.effective_to || null, confirmed_on: d.confirmed_on, confirmed_by: d.confirmed_by, basis: d.basis }); reload() } catch (e) { setError(e) } finally { setBusy(false) } }
-  return <details className="panel document-card"><summary><div><div className="tag-row"><Tag value={d.status}/><Tag value={d.parse_status}/></div><h3>{d.title}</h3><small>版本 {d.version} · {d.business_year ?? '长期'} · 资料编号 <code>{d.id}</code></small></div><ChevronRight size={18}/></summary>{d.parse_note && <p className="error">{d.parse_note}</p>}<form onSubmit={metadata}><div className="form-grid">{[['title', '资料标题', 'text'], ['version', '版本', 'text'], ['business_year', '业务年度（空为长期）', 'number'], ['admission_year', '入学年级（空为不限）', 'number'], ['effective_from', '生效日期', 'date'], ['effective_to', '失效日期', 'date']].map(([key, title, type]) => <Field key={key} title={title}><input name={key} type={type} defaultValue={String(d[key as keyof Doc] ?? '')} required={['title', 'version'].includes(key)} disabled={d.status === 'published'}/></Field>)}</div><ErrorBox error={error}/><div className="actions"><button disabled={busy || d.status === 'published'} className="secondary">保存元数据</button><button type="button" className="primary" disabled={busy || d.status === 'published' || d.parse_status !== 'ready'} onClick={() => action('publish')}>发布此版本</button><button type="button" className="secondary" disabled={busy || d.status === 'disabled'} onClick={() => { if (confirm('停用后新回答不再使用此版本，历史引用继续保存。')) void action('disable') }}>停用</button>{d.status !== 'published' && (d.parse_status === 'failed' || d.status === 'disabled' || d.parse_note) && <button type="button" className="secondary" disabled={busy} onClick={() => action('retry')}>重新解析</button>}<button type="button" className="text-button" disabled={busy} onClick={() => action('reindex')}>重建索引</button></div></form><h4>解析正文与定位</h4>{d.chunks.map(c => <details key={c.id} className="source-preview"><summary>{c.location}</summary><p className="pre-wrap">{c.text}</p></details>)}<a className="text-button" href={`/api/admin/documents/${d.id}/file`} target="_blank" rel="noreferrer">下载原始附件（正式答复无附件）<ArrowUpRight size={14}/></a></details>
+function DocumentCard({ document: d }: { document: Doc }) {
+  return <article className="panel document-card">
+    <div className="tag-row"><Tag value={d.status}/><Tag value={d.parse_status}/></div>
+    <h3>{d.title}</h3>
+    <small>版本 {d.version} · {d.business_year ?? '长期'} · 资料编号 <code>{d.id}</code></small>
+  </article>
 }
 
 function EventsPage() {

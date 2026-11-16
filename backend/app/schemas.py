@@ -2,7 +2,9 @@ import re
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+
+from .security import validate_new_password
 
 Text80 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 Phone = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^1[3-9]\d{9}$")]
@@ -45,11 +47,10 @@ class LoginInput(StrictModel):
 class SignupInput(RegisterInput):
     password: Annotated[str, StringConstraints(strip_whitespace=False, min_length=8, max_length=200)]
 
-    @model_validator(mode="after")
-    def validate_credentials(self):
-        if not self.password.strip():
-            raise ValueError("密码不能全为空白")
-        return self
+    @field_validator("password")
+    @classmethod
+    def validate_credentials(cls, value):
+        return validate_new_password(value)
 
 
 class QuestionInput(StrictModel):

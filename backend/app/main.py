@@ -18,6 +18,7 @@ from .alerts import HELP_TEXT, create_alert, detect_danger, retention_preview
 from .config import settings
 from .db import SessionLocal, get_db, now
 from .qa import context_for
+from .progress import question_progress
 from .embeddings import BGE_MODEL, bge_model
 from .retrieval import build_chunks, index_bge
 from .schemas import (DocumentMeta, EventUpdate, FormalReply, IssueUpdate, LoginInput, MergeInput,
@@ -267,7 +268,8 @@ def question_response(db, q):
                  "notice": "演示预警已生成，不会真实发送邮件。" if job.mode == "mock" else
                  "预警任务已记录；系统无法确认收件人是否阅读，请不要等待邮件通知。"}
     return {"id": q.id, "text": q.text, "status": q.status, "answer": q.answer,
-            "created_at": q.created_at, "alert": alert}
+            "created_at": q.created_at, "alert": alert,
+            "progress": question_progress(q.id) if q.status == "pending" else None}
 
 
 @app.get("/api/questions/{question_id}")
@@ -434,10 +436,11 @@ def document_data(db, document):
 def parse_document(db, document, *, ocr_deadline=None):
     try:
         parts, note = parse_file(store.path(document.storage_key), ocr_deadline=ocr_deadline)
-        build_chunks(db, document, parts)
-        if document.business_year is None:
-            document.business_year = infer_business_year(document.original_name, parts[0][1])
-        document.parse_status, document.parse_note = "ready", note
+        with db.begin_nested():
+            build_chunks(db, document, parts)
+            if document.business_year is None:
+                document.business_year = infer_business_year(document.original_name, parts[0][1])
+            document.parse_status, document.parse_note = "ready", note
     except Exception as exc:
         document.parse_status = "failed"
         document.parse_note = str(exc)[:300] if isinstance(exc, ValueError) else "解析失败，请检查文件与OCR配置后重试"
@@ -470,7 +473,7 @@ def upload(tasks: BackgroundTasks, file: UploadFile = File(...), actor=Depends(a
             db.add(d)
             db.flush()
             parse_document(db, d, ocr_deadline=ocr_deadline)
-            if d.parse_status == "ready" and not d.parse_note:
+            if d.parse_status == "ready":
                 d.status = "published"
                 audit(db, actor, "document_publish", d.id, automatic=True)
             audit(db, actor, "document_upload", d.id, parse_status=d.parse_status)
@@ -519,7 +522,7 @@ def parse_retry(document_id: str, tasks: BackgroundTasks, actor=Depends(admin), 
     if not d.storage_key or d.status == "published":
         raise HTTPException(422, "只能重试未发布的原始文件")
     parse_document(db, d)
-    if d.status == "draft" and d.parse_status == "ready" and not d.parse_note:
+    if d.status == "draft" and d.parse_status == "ready":
         d.status = "published"
         audit(db, actor, "document_publish", d.id, automatic=True)
     audit(db, actor, "parse_retry", d.id)

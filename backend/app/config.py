@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     libreoffice_command: str = "soffice"
     tesseract_command: str = "tesseract"
     pdftoppm_command: str = "pdftoppm"
+    rapidocr_python: str = ""
+    rapidocr_site_packages: str = ""
 
     def validate_runtime(self):
         if self.environment == "production":

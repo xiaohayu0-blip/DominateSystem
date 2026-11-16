@@ -12,12 +12,11 @@ from .config import settings
 from .db import SessionLocal, now
 from .models import Admin, ChildEntry, Document, Issue, Question, Registration
 from .retrieval import build_chunks
-from .security import hash_password
+from .security import hash_password, validate_new_password
 
 
 def create_admin(username: str, password: str):
-    if len(password) < 12:
-        raise ValueError("管理员密码至少12位")
+    validate_new_password(password, minimum=12)
     with SessionLocal() as db:
         if db.scalar(select(Admin).where(Admin.username == username)):
             raise ValueError("管理员已存在，不覆盖密码")
@@ -32,7 +31,7 @@ def initialize_demo():
     with SessionLocal() as db:
         if db.scalar(select(Registration).limit(1)) or db.scalar(select(Document).limit(1)):
             raise ValueError("数据库非空，不覆盖已有数据。请选择独立的全新演示数据库。")
-        password = secrets.token_urlsafe(18)
+        password = secrets.token_urlsafe(18) + "A1"
         db.add(Admin(username="demo-admin", password_hash=hash_password(password)))
         students = []
         for i in (1, 2):
@@ -107,7 +106,7 @@ def main():
     parser.add_argument("--username", default="admin")
     args = parser.parse_args()
     if args.command == "create-admin":
-        create_admin(args.username, getpass.getpass("New administrator password (12+ characters): "))
+        create_admin(args.username, getpass.getpass("New administrator password (12+ characters, letters and digits): "))
     elif args.command == "demo-init":
         initialize_demo()
     elif args.command == "mail-once":

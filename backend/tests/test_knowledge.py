@@ -39,10 +39,11 @@ def test_bge_indexes_new_chunks_and_reranks_within_selected_year(monkeypatch):
     ])
     other = publish("请假规则", "学生请假需要提交说明。", year=2023)
     best = publish("请假规则", "目标依据：学生请假需要提交说明。", year=2023)
-    publish("请假规则", "目标依据：学生请假需要提交说明。", year=2024)
+    other_year = publish("请假规则", "目标依据：学生请假需要提交说明。", year=2024)
     with SessionLocal() as db:
         results, _ = retrieval.retriever.search(db, "学生请假需要提交说明", {"business_year": 2023})
-        assert [doc.id for _, doc in results] == [best, other]
+        assert results[0][1].id == best
+        assert {doc.id for _, doc in results} == {best, other, other_year}
         assert all(len(chunk.bge_vector) == 512 and len(chunk.vector) == 128 for chunk, _ in results)
 
 
@@ -55,13 +56,14 @@ def ask(client, text, **kwargs):
 
 def test_year_grade_validity_and_citations(client):
     signup(client, student())
-    publish(year=2025, content="奖学金材料包含往年说明和申请表。")
+    older = publish(year=2025, content="奖学金材料包含往年说明和申请表。")
     current = publish(year=2026)
-    publish(year=2026, content="奖学金已经过期的材料。", end="2025-12-31")
+    expired = publish(year=2026, content="奖学金已经过期的材料。", end="2025-12-31")
     result = ask(client, "2026年度奖学金申请材料")
     answer = result["answer"]["items"][0]
     assert answer["status"] == "answered"
-    assert {c["document_id"] for c in answer["citations"]} == {current}
+    assert {c["document_id"] for c in answer["citations"]} == {current, older, expired}
+    assert "其他年度" in answer["content"]
     c = answer["citations"][0]
     source = client.get("/api/sources/" + c["chunk_id"])
     assert source.status_code == 200
@@ -69,7 +71,8 @@ def test_year_grade_validity_and_citations(client):
     assert "往年说明" in ask(client, "2025年度奖学金材料")["answer"]["items"][0]["content"]
     publish(title="转专业规定", content="转专业申请须提交学习计划。", grade=2024)
     result = ask(client, "转专业申请条件")
-    assert result["answer"]["items"][0]["status"] == "needs_clarification"
+    assert result["answer"]["items"][0]["status"] == "answered"
+    assert "2024级" in result["answer"]["items"][0]["content"]
     result = ask(client, "转专业申请条件", admission_year=2024, previous_id=result["id"])
     assert result["answer"]["items"][0]["status"] == "answered"
 
@@ -82,6 +85,76 @@ def test_partial_missing_and_conflict(client):
     publish(title="实习规定甲", content="实习申请应于5天内提交材料。")
     publish(title="实习规定乙", content="实习申请应于8天内提交材料。")
     assert ask(client, "实习申请几天提交")["answer"]["items"][0]["status"] == "document_conflict"
+
+    publish(title="银行卡风险说明甲", content="不得出租出借银行卡。奖学金公示不少于1个工作日。")
+    publish(title="银行卡风险说明乙", content="不得出租出借银行卡。奖学金公示不少于3个工作日。")
+    item = ask(client, "出借银行卡有什么风险")["answer"]["items"][0]
+    assert item["status"] == "answered" and item["citations"]
+
+
+def test_roster_matches_class_row_without_assuming_teacher_role(admin_client):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.active.append(["班级", "班主任", "班主任职称"])
+    workbook.active.append(["ACCA12401", "演示老师甲", "讲师"])
+    workbook.active.append(["ACCA12402", "演示老师乙", "讲师"])
+    workbook.active.append(["工程造价12402", "演示老师丙", "讲师"])
+    data = io.BytesIO()
+    workbook.save(data)
+    response = admin_client.post("/api/admin/documents/upload", files={
+        "file": ("班主任表.xlsx", data.getvalue()),
+    })
+    assert response.json()["status"] == "published"
+    signup(admin_client, student())
+    item = ask(admin_client, "24级ACCA二班找哪个专业成长班主任")["answer"]["items"][0]
+    assert item["status"] == "answered"
+    assert "没有细分班主任角色" in item["content"]
+    assert len(item["citations"]) == 1 and "ACCA12402" in item["citations"][0]["excerpt"]
+    item = ask(admin_client, "工成造价12402那班班主任是谁呀")["answer"]["items"][0]
+    assert item["status"] == "answered"
+    assert len(item["citations"]) == 1 and "工程造价12402" in item["citations"][0]["excerpt"]
+
+
+def test_roster_recognizes_shorthand_and_preserves_merged_counselor(admin_client, monkeypatch):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["辅导员", "班级", "班主任"])
+    sheet.append(["辅导老师甲", "数据管理12502", "班主任甲"])
+    sheet.append([None, "数据管理12501", "班主任乙"])
+    sheet.append(["辅导老师乙", "数字管理12503", "班主任丙"])
+    sheet.append(["辅导老师乙", "数据管理12503", "班主任丁"])
+    sheet.merge_cells("A2:A3")
+    data = io.BytesIO()
+    workbook.save(data)
+    assert admin_client.post("/api/admin/documents/upload", files={
+        "file": ("班主任表.xlsx", data.getvalue()),
+    }).json()["status"] == "published"
+    signup(admin_client, student())
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+
+    def model_answer(_, question, evidence, *, retry=False):
+        assert evidence[0]["roster_field"] == "辅导员"
+        assert evidence[0]["roster_value"] == "辅导老师甲"
+        return {"answer": "这个班的辅导员是辅导老师甲。",
+                "selections": [{"chunk_id": evidence[0]["chunk_id"],
+                                "quote": "辅导老师甲 | 数据管理12501"}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    for question in ("数管12501的导员是谁", "数理12501的导员是谁"):
+        item = ask(admin_client, question)["answer"]["items"][0]
+        assert item["status"] == "answered" and "辅导老师甲" in item["content"]
+    item = ask(admin_client, "数理12503的导员是谁")["answer"]["items"][0]
+    assert item["status"] == "needs_clarification" and not item["citations"]
+
+
+def test_unspecified_rank_percentage_is_not_blocked_before_retrieval(client):
+    signup(client, student())
+    publish("国家奖学金办法", "国家奖学金要求排名前10%。")
+    item = ask(client, "班上40个人我排第4，这卡在10%算不算")["answer"]["items"][0]
+    assert item["status"] == "missing_material" and not item["citations"]
 
 
 def test_points_without_cohort_show_scoped_evidence_instead_of_scholarships(client):
@@ -97,16 +170,16 @@ def test_points_without_cohort_show_scoped_evidence_instead_of_scholarships(clie
     latest = ask(client, question, business_year=2024, admission_year=2024)
     scoped = ask(client, question, business_year=2023, previous_id=latest["id"])["answer"]["items"][0]
     assert scoped["status"] == "answered"
-    assert {c["document_id"] for c in scoped["citations"]} == {older}
-    assert "0.3" in scoped["content"] and "0.5" not in scoped["content"]
+    assert {c["document_id"] for c in scoped["citations"]} == {older, newer}
+    assert "2023级" in scoped["content"] and "2024级" in scoped["content"]
     older_question = ask(client, question, business_year=2023)
     followed = ask(client, "那2024年呢？", business_year=2023, previous_id=older_question["id"])["answer"]["items"][0]
     assert followed["question"] == "那2024年呢"
-    assert {c["document_id"] for c in followed["citations"]} == {newer}
-    assert "0.5" in followed["content"] and "0.3" not in followed["content"]
+    assert {c["document_id"] for c in followed["citations"]} == {older, newer}
+    assert "2023级" in followed["content"] and "2024级" in followed["content"]
     short = ask(client, "那24年呢。", business_year=2023, previous_id=older_question["id"])["answer"]
     assert short["context"]["business_year"] == 2024
-    assert {c["document_id"] for c in short["items"][0]["citations"]} == {newer}
+    assert {c["document_id"] for c in short["items"][0]["citations"]} == {older, newer}
     independent = ask(client, "那2024年呢？")["answer"]["items"][0]
     assert independent["status"] == "missing_material"
     assert ask(client, "数学建模竞赛能认定多少学分？")["answer"]["items"][0]["status"] == "missing_material"
@@ -124,28 +197,294 @@ def test_model_error_and_invalid_reference_not_missing(client, monkeypatch):
     assert answer["status"] == "validation_failed" and not answer["citations"]
 
 
-def test_deepseek_displays_only_verified_excerpts(client, monkeypatch):
+@pytest.mark.parametrize("question", [
+    "专业排名第一,德育分加多少分?", "专业第一能加多少德育分？", "学习成绩排第一，德育加分怎么算？",
+])
+def test_retry_abstention_is_missing_material_not_validation_failure(client, monkeypatch, caplog, question):
+    signup(client, student())
+    quote = "德育素质评价成绩=德育素质积分（15 分）-扣分项。"
+    publish("专业排名与德育素质评价说明", quote, year=2026)
+    publish("国家奖学金评审打分表", "专业排名第一：50分。", year=2026, status="disabled")
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    calls = []
+
+    def model_answer(_, query, evidence, *, retry=False):
+        calls.append(retry)
+        assert evidence and all("打分表" not in source["title"] for source in evidence)
+        if retry:
+            assert "unsupported_summary_quantity" in query
+            return {"answer": "现有资料没有该加分条款。", "selections": []}
+        return {"answer": "专业排名第一加0分。", "selections": [
+            {"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    item = ask(client, question, business_year=2026)["answer"]["items"][0]
+    assert calls == [False, True]
+    assert item["status"] == "missing_material" and not item["citations"]
+    assert "未通过校验" not in item["content"] and "0分" not in item["content"]
+    assert "evidence_validation_retry reason=unsupported_summary_quantity" in caplog.text
+    assert "evidence_validation_failed" not in caplog.text
+    assert question not in caplog.text
+
+
+@pytest.mark.parametrize("retry_valid", [False, True])
+def test_retry_validation_preserves_number_checks_and_logs_reason(client, monkeypatch, caplog, retry_valid):
+    signup(client, student())
+    quote = "德育素质积分基准为15分。"
+    publish("德育评分办法", quote)
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+
+    def model_answer(_, query, evidence, *, retry=False):
+        return {"answer": "德育素质积分基准为15分。" if retry and retry_valid else "德育素质积分基准为50分。",
+                "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    item = ask(client, "德育素质积分基准多少分？")["answer"]["items"][0]
+    assert item["status"] == ("answered" if retry_valid else "validation_failed")
+    if retry_valid:
+        assert "15分" in item["content"] and item["citations"]
+    else:
+        assert not item["citations"]
+        assert "evidence_validation_failed type=InvalidEvidence reason=unsupported_summary_quantity" in caplog.text
+
+
+def test_deepseek_summarizes_verified_excerpts_without_inventing_numbers(client, monkeypatch):
     signup(client, student())
     quote = "数学建模竞赛获省级三等奖的，综测加0.3分。"
     original = f"第三章 加分项目。{quote}同一项目不重复加分。"
     publish("综合素质测评办法", original, year=2023)
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
 
-    def model_answer(_, question, evidence):
-        return {"answer": "2023年综测加0.5分。",
-                "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": selected_quote}]}
+    def model_answer(_, question, evidence, *, retry=False):
+        return {"answer": summary if not retry or not recover_on_retry else correct_summary,
+                "selections": [{"chunk_id": evidence[0]["chunk_id"],
+                                "quote": quote if retry and recover_on_retry else selected_quote}]}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     question = "数学建模竞赛省级三等奖综测加几分？"
     selected_quote = quote
+    correct_summary = "按这条规定，获得该奖可以计入综测，分值是0.3分。"
+    summary = correct_summary
+    recover_on_retry = False
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["content"] == quote
+    assert item["content"] == correct_summary
     assert item["citations"][0]["excerpt"] == original
 
     selected_quote = quote.replace("0.3", "0.5")
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
+    assert item["status"] == "answered" and item["content"] == correct_summary
+    assert item["citations"][0]["excerpt"] == original
+
+    selected_quote = quote
+    summary = correct_summary.replace("0.3", "0.5")
+    item = ask(client, question, business_year=2023)["answer"]["items"][0]
     assert item["status"] == "validation_failed" and not item["citations"]
-    assert item["content"] == "暂无资料"
+
+    recover_on_retry = True
+    item = ask(client, question, business_year=2023)["answer"]["items"][0]
+    assert item["status"] == "answered" and item["content"] == correct_summary and item["citations"]
+
+
+def test_assessment_distinguishes_question_percentage_from_policy_threshold(client, monkeypatch):
+    signup(client, student())
+    rule = "大四年级就业率低于85%，该单项考核为不合格。"
+    doc_id = publish("班主任管理办法", "大四年级就业率85%到88%，该单项考核为合格。\n" + rule)
+    with SessionLocal() as db:
+        chunk = db.scalar(select(Chunk).where(Chunk.document_id == doc_id))
+        chunk.location = "第5页 · 班主任考核结构化 · 大四 · 就业率"
+        db.commit()
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    summary = "如果大四就业率低于25%，该单项评为不合格。表里的界线是低于85%。"
+
+    def model_answer(_, question, evidence, *, retry=False):
+        assert "该单项为「不合格」" in question
+        assert evidence[0]["excerpt"] == rule
+        return {"answer": summary, "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": rule}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    question = "大四的就业率低于25%，班主任考核评为什么？"
+    item = ask(client, question)["answer"]["items"][0]
+    assert item["status"] == "answered" and item["content"] == summary and item["citations"]
+    summary = summary.replace("不合格", "优秀")
+    item = ask(client, question)["answer"]["items"][0]
+    assert item["status"] == "validation_failed" and not item["citations"]
+
+
+def test_competition_score_uses_two_verified_tables(client, monkeypatch):
+    from app.competition import BASE_LOCATION, TEAM_LOCATION
+    from app.retrieval import vector
+
+    signup(client, student())
+    base = "其他A类国家级一等奖或同级奖：45分。"
+    team = "6人团队：0.325、0.225、0.150、0.125、0.100、0.075。"
+    with SessionLocal() as db:
+        document = Document(title="学生手册", business_year=2026, status="published")
+        db.add(document)
+        db.flush()
+        db.add_all(Chunk(document_id=document.id, location=location, text=text, vector=vector(text))
+                   for location, text in [(BASE_LOCATION, base), (TEAM_LOCATION, team)])
+        db.commit()
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    summary = "如果第一名认定为一等奖或同级奖，按表分配，参考分为45分×0.075＝3.375分。"
+    omit_team = False
+
+    def model_answer(_, question, evidence, *, retry=False):
+        assert "45分 × 0.075 = 3.375分" in question
+        selections = [{"chunk_id": source["chunk_id"], "quote": quote}
+                      for source, quote in zip(evidence, (base, team), strict=True)]
+        return {"answer": summary, "selections": selections[:1] if omit_team else selections}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    question = "2026年国家级a类赛事第一名,团队里面第六名,加多少分"
+    item = ask(client, question)["answer"]["items"][0]
+    assert item["status"] == "answered" and item["content"] == summary and len(item["citations"]) == 2
+    omit_team = True
+    item = ask(client, question)["answer"]["items"][0]
+    assert item["status"] == "validation_failed"
+    omit_team = False
+    summary = summary.replace("3.375分", "4分")
+    item = ask(client, question)["answer"]["items"][0]
+    assert item["status"] == "validation_failed"
+
+
+def test_competition_second_place_can_follow_up_with_team_size(client, monkeypatch):
+    from app.competition import BASE_LOCATION, TEAM_LOCATION
+    from app.retrieval import vector
+
+    signup(client, student())
+    base = "其他A类国家级二等奖或同级奖：35分。"
+    three = "3人团队：0.500、0.300、0.200。"
+    six = "6人团队：0.325、0.225、0.150、0.125、0.100、0.075。"
+    with SessionLocal() as db:
+        document = Document(title="学生手册", business_year=2026, status="published")
+        db.add(document)
+        db.flush()
+        db.add_all(Chunk(document_id=document.id, location=location, text=text, vector=vector(text))
+                   for location, text in [(BASE_LOCATION, base), (TEAM_LOCATION, three + "\n" + six)])
+        db.commit()
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+
+    def model_answer(_, question, evidence, *, retry=False):
+        assert "35分 × 0.15 = 5.25分" in question
+        assert "第二名被认定为二等奖" in question
+        return {"answer": "若证书认定为二等奖且按表分配，第三位的参考加分为5.25分。",
+                "selections": [{"chunk_id": source["chunk_id"], "quote": quote}
+                               for source, quote in zip(evidence, (base, six), strict=True)]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    q = ask(client, "2026年国家级a类赛事第二名,团队里面第三名,加多少分")
+    item = q["answer"]["items"][0]
+    assert item["status"] == "needs_clarification" and "一共几个人" in item["content"]
+    follow = ask(client, "六个人", previous_id=q["id"])["answer"]["items"][0]
+    assert follow["status"] == "answered" and "5.25分" in follow["content"]
+    fourth = ask(client, "2026年国家级A类竞赛第四名，6人团队第3位加多少分")["answer"]["items"][0]
+    assert fourth["status"] == "needs_clarification" and "证书" in fourth["content"]
+
+
+def test_calendar_term_uses_source_heading_for_colloquial_query(client, monkeypatch):
+    signup(client, student())
+    text = "2026-2027学年第一学期校历。按周次表整理，第一学期教学周覆盖2026年9月7日至2027年1月17日。"
+    doc_id = publish("校历", text)
+    with SessionLocal() as db:
+        chunk = db.scalar(select(Chunk).where(Chunk.document_id == doc_id))
+        chunk.location = "第1页 · 校历结构化 · 第一学期教学周"
+        db.commit()
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+
+    def model_answer(_, question, evidence, *, retry=False):
+        title = "第一学期" if retry else "秋季学期"
+        return {"answer": f"按周次表整理，{title}教学周为2026年9月7日至2027年1月17日。",
+                "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": text}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    item = ask(client, "2026年秋季学期教学周是什么时候")["answer"]["items"][0]
+    assert item["status"] == "answered" and "第一学期" in item["content"] and "秋季学期" not in item["content"]
+
+
+def test_calendar_holiday_overview_keeps_linked_date_question(client, monkeypatch):
+    from app.qa import CALENDAR_OVERVIEW_LOCATION
+
+    signup(client, student())
+    excerpt = ("2026-2027学年校历假期总览。\n寒假：2027年1月18日至2027年2月21日。\n"
+               "暑假：2027年7月19日至2027年8月29日。\n节日标记不代表放假或调休区间。")
+    doc_id = publish("校历", excerpt)
+    with SessionLocal() as db:
+        chunk = db.scalar(select(Chunk).where(Chunk.document_id == doc_id))
+        chunk.location = CALENDAR_OVERVIEW_LOCATION
+        db.commit()
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    answer = "寒假从2027年1月18日到2027年2月21日，暑假从2027年7月19日到2027年8月29日。节日调休另看通知。"
+
+    def model_answer(_, question, evidence, *, retry=False):
+        assert "26年到27年" in question and "分别是从几月几号" in question
+        return {"answer": answer, "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": excerpt}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    result = ask(client, "26年到27年有哪些假可以放?分别是从几月几号休到几月几号?")["answer"]["items"]
+    assert len(result) == 1 and result[0]["status"] == "answered" and result[0]["content"] == answer
+    missing = ask(client, "27年到28年有哪些假可以放？")["answer"]["items"][0]
+    assert missing["status"] == "missing_material" and not missing["citations"]
+
+
+def test_calendar_single_year_lists_festival_marks(client, monkeypatch):
+    from app.qa import CALENDAR_YEAR_LOCATION_PREFIX
+
+    signup(client, student())
+    excerpt = ("2026年覆盖范围：2026年9月7日至2026年12月31日。\n"
+               "校历节日标记：中秋节2026年9月25日；国庆节2026年10月1日。")
+    doc_id = publish("校历", excerpt)
+    with SessionLocal() as db:
+        chunk = db.scalar(select(Chunk).where(Chunk.document_id == doc_id))
+        chunk.location = "第1页" + CALENDAR_YEAR_LOCATION_PREFIX + "2026"
+        db.commit()
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    calls = []
+
+    def model_answer(_, question, evidence, *, retry=False):
+        calls.append(retry)
+        answer = ("中秋节是9月25日，国庆节是10月1日。" if retry else
+                  "校历覆盖9月7日至12月31日。")
+        return {"answer": answer, "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": excerpt}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    item = ask(client, "26年有哪些假可以放？分别从几月几号休到几月几号？")["answer"]["items"][0]
+    assert item["status"] == "answered" and "中秋节" in item["content"] and "国庆节" in item["content"]
+    assert calls == [False, True]
+
+
+def test_competition_catalog_distinguishes_main_and_special_tracks(client, monkeypatch):
+    from app.competition_catalog import CATALOG_MARKER
+    from app.retrieval import vector
+
+    signup(client, student())
+    with SessionLocal() as db:
+        doc = Document(title="2026版学生手册", business_year=2026, status="published")
+        db.add(doc)
+        db.flush()
+        for index, (name, grade) in enumerate((
+            ("挑战杯全国大学生课外学术科技作品竞赛", "A+"),
+            ("挑战杯全国大学生课外学术科技作品竞赛（专项赛）", "A"),
+        ), 1):
+            text = f"2025年学科竞赛目录：{name}，等级：{grade}类。"
+            db.add(Chunk(document_id=doc.id, location=f"第385页{CATALOG_MARKER}2025年序号{index}",
+                         text=text, vector=vector(text)))
+        db.commit()
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+
+    def model_answer(_, question, evidence, *, retry=False):
+        answer = ("按2025年目录，主赛是A+类，专项赛是A类。" if len(evidence) == 2
+                  else "按2025年目录，该专项赛是A类。")
+        return {"answer": answer, "selections": [{"chunk_id": c["chunk_id"], "quote": c["excerpt"]}
+                                                  for c in evidence]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    item = ask(client, "挑战杯是哪类赛事")["answer"]["items"][0]
+    assert item["status"] == "answered" and "A+类" in item["content"] and len(item["citations"]) == 2
+    item = ask(client, "挑战杯专项赛属于哪类")["answer"]["items"][0]
+    assert item["status"] == "answered" and "A+类" not in item["content"] and len(item["citations"]) == 1
+    item = ask(client, "2026年挑战杯是哪类赛事")["answer"]["items"][0]
+    assert item["status"] == "answered" and item["citations"]
+    assert "未找到2026年" in item["content"] and "2025年目录" in item["content"]
 
 
 def test_current_year_overrides_inherited_year_and_model_can_abstain(client, monkeypatch):
@@ -170,6 +509,7 @@ def test_historical_reference_does_not_open_an_issue(client, monkeypatch):
     historic = publish("应征入伍指南", "应征入伍基本条件\n男性身高160cm以上。", year=2024)
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
     monkeypatch.setattr(DeepSeekModel, "select_evidence", lambda _, query, evidence: {
+        "answer": "男性的身高要求为160cm以上。",
         "selections": [{"chunk_id": evidence[0]["chunk_id"], "start_line": 2, "end_line": 2}],
     })
     result = ask(client, "2026年征兵入伍的条件是什么")["answer"]
@@ -177,13 +517,13 @@ def test_historical_reference_does_not_open_an_issue(client, monkeypatch):
     item = result["items"][0]
     assert item["status"] == "historical_reference"
     assert "暂无2026年" in item["content"] and "2024年资料" in item["content"]
-    assert item["content"].endswith("男性身高160cm以上。")
+    assert item["content"].endswith("男性的身高要求为160cm以上。")
     assert {c["document_id"] for c in item["citations"]} == {historic}
     from app.models import Issue
     with SessionLocal() as db:
         assert db.scalar(select(Issue)) is None
     latest = ask(client, "2024年征兵入伍的条件是什么")["answer"]["items"][0]
-    assert latest["status"] == "answered" and latest["content"] == "男性身高160cm以上。"
+    assert latest["status"] == "answered" and latest["content"] == "男性的身高要求为160cm以上。"
 
 
 @pytest.mark.parametrize("question", [
@@ -283,7 +623,7 @@ def test_pptx_and_zip_upload_publish_locatable_documents(admin_client, monkeypat
             target.writestr(name, data)
     upload = {"file": ("含图说明.pptx", illustrated.getvalue())}
     draft = c.post("/api/admin/documents/upload", files=upload).json()
-    assert draft["status"] == "draft" and "尚未解析" in draft["parse_note"]
+    assert draft["status"] == "draft" and draft["parse_status"] == "failed" and "尚未解析" in draft["parse_note"]
 
     from app import storage
 
@@ -294,9 +634,24 @@ def test_pptx_and_zip_upload_publish_locatable_documents(admin_client, monkeypat
     monkeypatch.setattr(settings(), "ocr_enabled", True)
     monkeypatch.setattr(storage, "presentation_ocr", recognize)
     result = c.post(f'/api/admin/documents/{draft["id"]}/retry').json()
-    assert result["status"] == "draft" and "请核对" in result["parse_note"]
+    assert result["status"] == "published" and "OCR" in result["parse_note"]
     assert any("（OCR）" in chunk["location"] and "成绩单" in chunk["text"] for chunk in result["chunks"])
-    assert c.post(f'/api/admin/documents/{draft["id"]}/publish').json()["status"] == "published"
+    assert c.post("/api/admin/documents/upload", files=upload).json()["status"] == "published"
+
+    def fail_ocr(path, pages, slide_count, deadline):
+        raise ValueError("OCR 处理超时")
+
+    monkeypatch.setattr(storage, "presentation_ocr", fail_ocr)
+    mixed_batch = io.BytesIO()
+    with zipfile.ZipFile(mixed_batch, "w") as archive:
+        archive.writestr("含图说明.pptx", illustrated.getvalue())
+        archive.writestr("资料.csv", "奖学金,成绩单")
+    result = c.post("/api/admin/documents/upload", files={
+        "file": ("批量.zip", mixed_batch.getvalue()),
+    }).json()
+    assert [(doc["status"], doc["parse_status"]) for doc in result["documents"]] == [
+        ("draft", "failed"), ("published", "ready"),
+    ]
 
 
 @pytest.mark.parametrize("format", ["docx", "xlsx", "csv", "pdf"])
@@ -333,6 +688,62 @@ def test_actual_parsers(format):
     assert any(text.strip() for _, text in parts)
 
 
+@pytest.mark.parametrize("format", ["docx", "xlsx", "pdf"])
+def test_upload_extracts_text_and_ocr_before_publishing(format, admin_client, monkeypatch):
+    from PIL import Image
+    from app import storage
+
+    image = Image.new("RGB", (100, 50), "white")
+    png = io.BytesIO()
+    image.save(png, format="PNG")
+    png.seek(0)
+    buffer = io.BytesIO()
+    if format == "docx":
+        from docx import Document
+        document = Document()
+        document.add_paragraph("Original text")
+        document.add_picture(png)
+        document.save(buffer)
+    elif format == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.drawing.image import Image as WorksheetImage
+        workbook = Workbook()
+        workbook.active.append(["Original text"])
+        workbook.active.add_image(WorksheetImage(png), "A2")
+        workbook.save(buffer)
+    else:
+        from pypdf import PdfWriter
+        from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+        image_pdf = io.BytesIO()
+        image.save(image_pdf, format="PDF")
+        writer = PdfWriter(clone_from=image_pdf)
+        page = writer.pages[0]
+        page["/Resources"][NameObject("/Font")] = DictionaryObject({
+            NameObject("/F1"): DictionaryObject({
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }),
+        })
+        stream = DecodedStreamObject()
+        stream.set_data(page.get_contents().get_data() + b"\nBT /F1 12 Tf 2 2 Td (Original text) Tj ET")
+        page.replace_contents(stream)
+        writer.write(buffer)
+
+    monkeypatch.setattr(settings(), "ocr_enabled", True)
+    monkeypatch.setattr(storage, "ocr_image", lambda path, *, deadline: "Recognized text")
+    monkeypatch.setattr(storage, "ocr_page", lambda path, page, *, deadline: "Recognized text")
+    response = admin_client.post("/api/admin/documents/upload", files={
+        "file": (f"illustrated.{format}", buffer.getvalue()),
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "published"
+    assert any("Original text" in chunk["text"] for chunk in result["chunks"])
+    assert any("OCR" in chunk["location"] and "Recognized text" in chunk["text"]
+               for chunk in result["chunks"])
+
+
 def test_deepseek_adapter_mock_transport(monkeypatch):
     import httpx
     import app.qa as qa
@@ -352,4 +763,5 @@ def test_unknown_source_and_scope(client):
     with SessionLocal() as db:
         chunk_id = db.scalar(select(Chunk.id))
     assert client.get("/api/sources/" + chunk_id).status_code == 404
-    assert ask(client, "帮我审批奖学金")["answer"]["items"][0]["status"] == "out_of_scope"
+    item = ask(client, "帮我审批奖学金")["answer"]["items"][0]
+    assert item["status"] == "answered" and item["citations"]

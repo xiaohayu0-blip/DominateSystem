@@ -9,6 +9,8 @@ os.environ["STORAGE_DIR"] = str(TEST_ROOT / "files")
 os.environ["ENVIRONMENT"] = "test"
 os.environ["MODEL_MODE"] = "mock"
 os.environ["MAIL_MODE"] = "mock"
+os.environ["OCR_ENABLED"] = "false"
+os.environ["RAPIDOCR_PYTHON"] = ""
 
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
@@ -19,9 +21,18 @@ from sqlalchemy import delete  # noqa: E402
 from app.db import Base, SessionLocal  # noqa: E402
 from app.main import app, limits  # noqa: E402
 from app.models import Admin  # noqa: E402
+from app.qa import DeepSeekModel  # noqa: E402
 from app.security import hash_password  # noqa: E402
 
 command.upgrade(Config("alembic.ini"), "head")
+
+
+@pytest.fixture(autouse=True)
+def simulated_question_planner(monkeypatch):
+    # No real model calls during automatic tests. Semantic planner behavior is tested
+    # explicitly with supplied partitions, adapter transport, and a separate live corpus.
+    monkeypatch.setattr(DeepSeekModel, "group_questions", lambda self, text, clauses: {
+        "groups": [list(range(len(clauses)))]})
 
 
 @pytest.fixture(autouse=True)
@@ -58,5 +69,5 @@ def parent():
 
 def signup(client, profile, **kwargs):
     return client.post("/api/register", json={
-        **profile, "password": "test-secret-strong",
+        **profile, "password": "test-secret-strong1",
     }, **kwargs)

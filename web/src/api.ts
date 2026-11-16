@@ -28,7 +28,8 @@ export type Child = { name: string; phone: string; major: string; class_name: st
 export type Profile = { id?: string; role: 'student' | 'parent'; name: string; phone: string; major: string; class_name: string; children: Child[] }
 export type Citation = { chunk_id: string; document_id: string; title: string; publisher: string; version: string; location: string; excerpt: string; business_year: number | null; admission_year: number | null; effective_from: string | null; effective_to: string | null; source_status?: string; material_mode: string }
 export type Answer = { items: { question: string; status: string; content: string; citations: Citation[] }[]; context?: { business_year: number; admission_year?: number; followup_question?: string }; notice?: string }
-export type Question = { id: string; text: string; status: string; answer: Answer; created_at: string; snapshot?: Profile; alert: null | { message: string; mail_mode: string; status: string; notice: string } }
+export type Question = { id: string; text: string; status: string; answer: Answer; created_at: string; progress?: 'received' | 'searching' | 'checking' | 'composing' | null; snapshot?: Profile; alert: null | { message: string; mail_mode: string; status: string; notice: string } }
+
 type WeeklyMail = { status: string; week_start: string; sent_at: string | null; attempts: number }
 export type Occurrence = { issue_id: string; question_id: string; question: string; subquestion: string; snapshot: Profile; context: { business_year: number; admission_year: number | null }; answer: Answer; created_at: string; weekly_mail: WeeklyMail | null }
 export type History = { at: string; by?: string; note?: string; state?: string; action?: string }

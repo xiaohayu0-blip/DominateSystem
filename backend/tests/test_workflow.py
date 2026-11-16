@@ -147,12 +147,14 @@ def test_idempotent_requests_and_cross_context_access(client):
 
 
 def test_clarification_resolves_only_own_previous(client):
-    from test_knowledge import publish
+    from test_ranking import source
     signup(client, student())
-    publish(title="转专业说明", content="转专业申请须提交学习计划，由学院审核。", grade=2024)
-    prior = ask(client, "转专业申请条件")
+    with SessionLocal() as db:
+        source(db)
+        db.commit()
+    prior = ask(client, "专业排名第一德育加多少分")
     assert prior["answer"]["items"][0]["status"] == "needs_clarification"
-    answer = ask(client, "转专业申请条件", admission_year=2024, previous_id=prior["id"])
+    answer = ask(client, "智育", previous_id=prior["id"])
     assert answer["answer"]["items"][0]["status"] == "answered"
     with SessionLocal() as db:
         old = db.scalar(select(Issue).where(Issue.question_id == prior["id"]))
