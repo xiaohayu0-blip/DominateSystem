@@ -1,6 +1,13 @@
 import { test, expect } from '@playwright/test'
 
-test('密码限制与立即反馈、真实阶段轮询、完整答案展示', async ({ page }) => {
+for (const scenario of [
+  { name: 'desktop', width: 1280, reducedMotion: 'no-preference' },
+  { name: 'mobile', width: 390, reducedMotion: 'no-preference' },
+  { name: 'reduced-motion', width: 320, reducedMotion: 'reduce' },
+] as const) {
+test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
+  await page.setViewportSize({ width: scenario.width, height: 900 })
+  await page.emulateMedia({ reducedMotion: scenario.reducedMotion })
   const profile = { id: 'student-progress', role: 'student', name: '进度测试学生', phone: '13800000003',
     major: '工商管理', class_name: '测试一班', children: [] }
   const question = { id: 'question-progress', text: '奖学金申请材料', status: 'pending',
@@ -44,12 +51,21 @@ test('密码限制与立即反馈、真实阶段轮询、完整答案展示', as
   expect(registrations).toBe(1)
   await page.getByRole('textbox', { name: '你的问题' }).fill(question.text)
   await page.getByRole('button', { name: '发送问题', exact: true }).click()
-  for (const text of ['收到问题啦', '正在查找学院资料', '正在核对适用年级', '正在整理回答']) {
-    await expect(page.getByRole('status')).toHaveText(text)
+  for (const [stage, text] of Object.entries({ received: '收到问题啦', searching: '正在查找学院资料',
+    checking: '正在核对适用年级', composing: '正在整理回答' })) {
+    const notice = page.getByRole('status')
+    await expect(notice).toHaveText(text)
+    await expect(notice).toHaveAttribute('data-stage', stage)
+    await expect(notice).toHaveCSS('border-top-width', '1px')
+    await expect(notice.locator('.progress-notice-label')).toHaveCSS('animation-name',
+      scenario.reducedMotion === 'reduce' ? 'none' : 'progress-message-pop')
+    await expect(notice.locator('.progress-notice-dots i')).toHaveCount(3)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }
-  await page.screenshot({ path: '../docs/evidence/progress-waiting-20261116.png', fullPage: true })
+  await page.screenshot({ path: `../docs/evidence/progress-box-${scenario.name}-20261116.png`, fullPage: true })
   await expect(page.locator('.answer-item .pre-wrap')).toHaveText('需提交申请表和成绩单。')
   await expect(page.getByRole('status')).toHaveCount(0)
   await expect(page.getByText('正在处理，请稍候…', { exact: true })).toHaveCount(0)
-  await page.screenshot({ path: '../docs/evidence/progress-answer-20261116.png', fullPage: true })
+  await page.screenshot({ path: `../docs/evidence/progress-answer-${scenario.name}-20261116.png`, fullPage: true })
 })
+}

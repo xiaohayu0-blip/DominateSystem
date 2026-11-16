@@ -1,4 +1,81 @@
 /* Shared visual treatment for the consultation site and staff workspace. */
+.user-site .progress-notice {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 320px);
+  min-height: 62px;
+  margin: 14px 0 20px;
+  padding: 12px 14px;
+  border: 1px solid #c9d7ed;
+  border-radius: 16px;
+  background: #f3f7fe;
+  color: #334f79;
+  box-shadow: 0 3px 12px #294b7910;
+  animation: progress-card-appear 280ms ease-out both;
+}
+
+.progress-notice-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: #e3ecfa;
+  color: #4a6b9e;
+}
+
+.progress-notice-label {
+  display: block;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.6;
+  animation: progress-message-pop 380ms cubic-bezier(.2, .8, .25, 1) both;
+}
+
+.progress-notice-dots {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.progress-notice-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #6687b8;
+  animation: progress-dot-hop 1200ms ease-in-out infinite;
+}
+
+.progress-notice-dots i:nth-child(2) { animation-delay: 150ms; }
+.progress-notice-dots i:nth-child(3) { animation-delay: 300ms; }
+
+@keyframes progress-card-appear {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes progress-message-pop {
+  0% { opacity: 0; transform: translateY(9px) scale(.97); }
+  70% { opacity: 1; transform: translateY(-2px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes progress-dot-hop {
+  0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .user-site .progress-notice,
+  .progress-notice-label,
+  .progress-notice-dots i {
+    animation: none;
+  }
+}
+
 .user-site {
   --surface: #fff;
   --canvas: #f5f6fa;
