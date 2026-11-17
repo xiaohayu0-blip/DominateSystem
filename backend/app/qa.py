@@ -70,6 +70,13 @@ class DeepSeekModel:
             "心理困扰、人身安全、处分、经济困难等严肃事项保持认真，不使用玩笑或颜文字。"
             "语气调整不得削弱或遗漏影响答案的完整制度条件、适用对象、分值、期限、否定和例外。"
             "幽默不能引入制度没有的数字、要求、保证或审批结论；不要为了表情和玩笑挤占必要依据的字数。"
+            "answer必须像在接住学生的话，不写成公文摘要。先用短句直接回应问题，必要时轻松提醒，再分段讲规则。"
+            "不要用‘按《某某文件》’开头，不要把文件名反复塞进正文；真实出处由selections展示。"
+            "普通咨询的口吻示例：‘能加，不过先别急着把分记满，得看实际工作表现 (｡•̀ᴗ-)✧’。"
+            "这只是口吻示例，内容必须依据当前问题和证据重新写，禁止机械套用。"
+            "若不同文件口径不一致，先自然说明‘这里有两份口径，先别急着按一个数申报。’，"
+            "然后分别说清每份文件的适用范围、规则和例外，不自行判断哪份优先，不把冲突掩盖成统一标准。"
+            "规则较多时用换行和简短分点，不堆成长段；输出纯文本，不使用星号加粗等Markdown格式。"
             "答复按原意核对，允许同义词、语序变化、中文与阿拉伯数字互换，无需逐字复述。"
             "发送前自查数值、单位、条件、否定和例外的含义是否一致，不因表达方式不同而拒答。"
             "保留原文的数值、单位、适用条件和例外；单项等级不能当成总评分。"
@@ -318,7 +325,20 @@ def policy_answer_text(answer, sources):
             return ""
         return match[0]
 
-    return re.sub(r"《([^》]+)》", without_known_title, answer)
+    text = re.sub(r"《([^》]+)》", without_known_title, answer)
+
+    def without_bare_title(match):
+        reference = normalized_title(match[0])
+        reference = re.sub(r"^(?:根据|按照|依据|参考|另据|按|在)", "", reference)
+        stem = re.sub(r"\(\d{4}版\)$", "", reference)
+        if len(stem) >= 4 and any(title.endswith(reference) for title in titles):
+            return ""
+        return match[0]
+
+    # A natural document reference need not be wrapped in book-title brackets.
+    # Remove only a verified name AND version, never arbitrary years or scores.
+    return re.sub(r"[\u4e00-\u9fffA-Za-z·]+[（(]\s*\d{4}\s*版\s*[）)](?:\.(?:pdf|docx?))?",
+                  without_bare_title, text, flags=re.IGNORECASE)
 
 
 def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessment=None, calculation=None,

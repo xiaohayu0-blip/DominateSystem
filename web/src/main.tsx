@@ -1,11 +1,23 @@
 import { StrictMode, cloneElement, isValidElement, useId, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import { ArrowUpRight, ArrowUp, BookOpen, Landmark, FileText, ChevronRight, ShieldCheck, LogOut, Plus, X, LayoutDashboard, Inbox, CalendarDays, Siren, Files, Users, Search, Menu, RefreshCw, CheckCircle2 } from 'lucide-react'
-import { api, ApiError, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type Modes, type Answer, type History } from './api'
+import { ArrowUpRight, ArrowUp, BookOpen, FileText, ChevronRight, ShieldCheck, LogOut, Plus, X, LayoutDashboard, Inbox, CalendarDays, Siren, Files, Users, Search, Menu, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { api, ApiError, streamAnswer, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type Modes, type Answer, type History } from './api'
 import './style.css'
 import './interface.css'
 import './tactile.css'
+
+const octopusImage = new URL('./assets/octopus-reference.jpg', import.meta.url).href
+
+function OctopusMascot({ className = '' }: { className?: string }) {
+  return <svg className={'octopus-mascot ' + className} viewBox="0 584 1080 1080" role="img" aria-label="粉蓝小八爪鱼" focusable="false">
+    <image href={octopusImage} width="1080" height="2344"/>
+  </svg>
+}
+
+function ReplyHeader({ createdAt }: { createdAt: string }) {
+  return <div className="reply-heading"><OctopusMascot/><div><b>小八来答</b><small>{stamp(createdAt)}</small></div></div>
+}
 
 function ErrorBox({ error }: { error: unknown }) { return error ? <div role="alert" className="error">{error instanceof Error ? error.message : String(error)}</div> : null }
 function Empty({ text = '这里还没有记录。' }: { text?: string }) { return <div className="empty"><Inbox size={26}/><p>{text}</p></div> }
@@ -198,7 +210,7 @@ function UserApp() {
   return <div ref={userSiteRef} className={landing ? 'user-site user-site--landing' : 'user-site'}>
     <div className={chatProfile ? 'user-header user-header--chat' : 'user-header'}>
     <header className="site-header">
-      <a className="brand" href="#/" aria-label="管理学院制度服务首页"><span className="brand-icon"><Landmark size={30} strokeWidth={1.5}/></span><span>管理学院<small>制度服务平台</small></span></a>
+      <a className="brand" href="#/" aria-label="管理学院制度服务首页"><span className="brand-icon"><OctopusMascot/></span><span>管理学院<small>制度服务平台</small></span></a>
       <div className="header-actions"><nav className="public-nav" aria-label="网站导航"><a href="#/" aria-current="page">制度咨询</a><a href="#service-notes">使用说明</a></nav>{profile && <button className="text-button" onClick={logout}><LogOut size={16}/>退出</button>}</div>
     </header>
     {chatProfile && <div className="mobile-chat-profile"><IdentityCard profile={chatProfile} edit={editProfile} logout={logout}/></div>}
@@ -221,7 +233,7 @@ function UserApp() {
       </div><div className="boundary"><strong>服务范围</strong><p>本平台提供制度信息参考，不代替资格认定、审批或评审决定。</p></div></details>
       {landing && <a className="landing-admin-link" href="#/admin">管理工作台 <ArrowUpRight size={12}/></a>}</aside>
       <div className="account-entry">
-        {landing && <div className="tactile-art" aria-hidden="true"><span className="tactile-block tactile-block--pink"/><span className="tactile-block tactile-block--blue"/><span className="tactile-block tactile-block--pill"/><span className="tactile-art-shadow"/></div>}
+        {landing && <div className="tactile-art"><OctopusMascot className="landing-octopus"/></div>}
         {landing && <ul className="account-intro-topics" aria-label="可咨询事项">
           <li>学生请假</li><li>综合测评</li><li>奖学金评定</li>
         </ul>}
@@ -322,21 +334,34 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
     observer.observe(composer)
     return () => observer.disconnect()
   }, [])
+  const answerController = useRef<AbortController | null>(null)
+  useEffect(() => () => answerController.current?.abort(), [])
   async function poll(id: string) {
-    for (let i = 0; i < 240; i++) {
-      const q = await api<Question>('/questions/' + id)
-      setQuestions(old => old.map(x => x.id === q.id ? q : x))
-      if (q.status === 'complete') {
+    answerController.current?.abort()
+    const controller = new AbortController()
+    answerController.current = controller
+    await streamAnswer(id, event => {
+      if (event.type === 'complete') {
+        const q = event.question
+        setQuestions(old => old.map(x => x.id === id ? q : x))
         const context = q.answer.context
         if (context?.followup_question || (year && context && context.business_year !== Number(year))) {
           setYear(String(context.business_year))
         }
         setUnresolved(null)
-        return
+      } else {
+        setQuestions(old => old.map(q => {
+          if (q.id !== id) return q
+          if (event.type === 'progress') return { ...q, status: 'pending', progress: event.stage }
+          const items = event.type === 'item' && event.index === 0 ? [] : [...(q.answer.items ?? [])]
+          if (event.type === 'item') items[event.index] = event.item
+          else if (items[event.index]) items[event.index] = {
+            ...items[event.index], content: items[event.index].content + event.text,
+          }
+          return { ...q, status: 'streaming', answer: { items } }
+        }))
       }
-      await new Promise(r => setTimeout(r, 750))
-    }
-    throw new Error('问题已保存，回答仍在处理。可点击“检查回答状态”，请勿重复提交。')
+    }, controller.signal)
   }
   async function submit(e: FormEvent) {
     e.preventDefault(); if (!draft.trim() || busy) return
@@ -354,7 +379,7 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
     } catch (e) { setQuestions(old => old.filter(x => x.id !== optimisticId)); setError(e) } finally { setBusy(false) }
   }
   async function open(c: Citation) { try { setSource(await api<Citation>('/sources/' + c.chunk_id)) } catch (e) { setError(e) } }
-  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>制度咨询</h1><p className="chat-description">查询条文依据与办理要求。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可询问办理条件、时间及制度依据。可在问题中注明业务年度。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><BookOpen size={18}/><b>制度问答</b><span>依据已发布资料回答</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><BookOpen size={30}/></span><h2>请输入需要了解的制度事项</h2><p>请说明具体事项，便于查找适用制度。</p><div className="suggestions"><span className="suggestion-label">提问示例</span>{['2026年度奖学金申请需要哪些材料？', '2026年度请假流程是什么？', '校外实习补贴如何申请？'].map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div></div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><span className="eyebrow">制度答复 · {stamp(q.created_at)}</span>{q.status === 'pending' ? <ProgressNotice stage={q.progress ?? 'received'}/> : <AnswerView answer={q.answer} open={open}/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>承接上次提问条件</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="请输入你的制度问题…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? null : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <div className="modal-backdrop" onClick={() => setSource(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="引用来源" onClick={e => e.stopPropagation()}><button className="close" aria-label="关闭来源" onClick={() => setSource(null)} autoFocus><X/></button><span className="eyebrow">引用来源 / 原文摘录</span><h2>{source.title}</h2><p>{source.publisher ? source.publisher + ' · ' : ''}版本 {source.version}</p><div className="meta-strip">业务年度 {source.business_year ?? '长期'} / 入学年级 {source.admission_year ?? '不限'}<br/>有效期 {source.effective_from ?? '未限定'} 至 {source.effective_to ?? '未限定'}</div>{source.source_status !== 'published' && <p className="error">该版本已停用或不可用，以下为当时引用。</p>}<blockquote>{source.excerpt}</blockquote><small>仅展示你已引用的原文片段。完整附件由管理员审核访问。</small><button className="secondary" onClick={() => setSource(null)}>返回问答</button></section></div>}</main>
+  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>制度咨询</h1><p className="chat-description">查询条文依据与办理要求。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可询问办理条件、时间及制度依据。可在问题中注明业务年度。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><OctopusMascot/><b>小八 · 校园问答</b><span>陪你把事情理清楚</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><OctopusMascot/></span><h2>今天想了解点什么？</h2><p>奖学金、请假、综测，都可以问我 (｡•̀ᴗ-)✧</p><div className="suggestions"><span className="suggestion-label">提问示例</span>{['2026年度奖学金申请需要哪些材料？', '2026年度请假流程是什么？', '校外实习补贴如何申请？'].map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div></div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><ReplyHeader createdAt={q.created_at}/>{q.status === 'pending' ? <ProgressNotice stage={q.progress ?? 'received'}/> : <AnswerView answer={q.answer} open={open}/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>承接上次提问条件</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="想了解什么，问问小八…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? null : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <div className="modal-backdrop" onClick={() => setSource(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="引用来源" onClick={e => e.stopPropagation()}><button className="close" aria-label="关闭来源" onClick={() => setSource(null)} autoFocus><X/></button><span className="eyebrow">引用来源 / 原文摘录</span><h2>{source.title}</h2><p>{source.publisher ? source.publisher + ' · ' : ''}版本 {source.version}</p><div className="meta-strip">业务年度 {source.business_year ?? '长期'} / 入学年级 {source.admission_year ?? '不限'}<br/>有效期 {source.effective_from ?? '未限定'} 至 {source.effective_to ?? '未限定'}</div>{source.source_status !== 'published' && <p className="error">该版本已停用或不可用，以下为当时引用。</p>}<blockquote>{source.excerpt}</blockquote><small>仅展示你已引用的原文片段。完整附件由管理员审核访问。</small><button className="secondary" onClick={() => setSource(null)}>返回问答</button></section></div>}</main>
 }
 
 const sections = [

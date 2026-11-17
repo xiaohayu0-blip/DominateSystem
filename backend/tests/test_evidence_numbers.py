@@ -144,6 +144,31 @@ def test_actual_document_version_in_reference_is_not_a_policy_quantity(reference
     assert verified_excerpts(selected, [source], cohort_options=False, deepseek=True)[0] == answer
 
 
+@pytest.mark.parametrize('reference', ['学生手册（2026版）', '按学生手册（2026版）', '武汉纺织大学学生手册（2026版）'])
+def test_natural_unbracketed_document_reference_keeps_real_version(reference):
+    source = {'chunk_id': 'handbook', 'document_id': 'handbook', 'location': '第169页',
+              'title': '武汉纺织大学学生手册（2026版）.pdf',
+              'excerpt': '寝室长加0-5分/学期，由学院负责认定加分。'}
+    answer = f'能加。{reference}里，寝室长由学院认定加0—5分/学期。'
+    selected = {'answer': answer, 'selections': [{'chunk_id': 'handbook', 'quote': source['excerpt']}]}
+    assert verified_excerpts(selected, [source], cohort_options=False, deepseek=True)[0] == answer
+
+
+@pytest.mark.parametrize('answer', [
+    '学生手册（2027版）里，寝室长加0—5分/学期。',
+    '学生手册（2026版）里，寝室长加0—7分/学期。',
+    '学生手册（2026版）里，另外加2026分。',
+    '其他大学学生手册（2026版）里，寝室长加0—5分/学期。',
+])
+def test_unbracketed_document_reference_cannot_hide_wrong_year_or_score(answer):
+    source = {'chunk_id': 'handbook', 'document_id': 'handbook', 'location': '第169页',
+              'title': '武汉纺织大学学生手册（2026版）.pdf',
+              'excerpt': '寝室长加0-5分/学期，由学院负责认定加分。'}
+    selected = {'answer': answer, 'selections': [{'chunk_id': 'handbook', 'quote': source['excerpt']}]}
+    with pytest.raises(InvalidEvidence, match='unsupported_summary_quantity'):
+        verified_excerpts(selected, [source], cohort_options=False, deepseek=True)
+
+
 @pytest.mark.parametrize("answer", [
     "根据《武汉纺织大学学生手册（2027版）》，寝室长加0—5分/学期。",
     "根据《学生手册（2026版）》，寝室长加0—7分/学期。",

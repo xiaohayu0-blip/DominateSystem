@@ -91,27 +91,6 @@
   height: 235px;
   margin: 4px auto 30px;
 }
-.tactile-block { display: block; position: absolute; }
-.tactile-block--pink {
-  top: 0; left: 40px; width: 148px; height: 164px; border-radius: 33px;
-  background: linear-gradient(135deg, #ffcce2, #ffa6d1);
-  box-shadow: inset 3px 4px 8px #ffffff91, 0 12px 20px #c06b9d16;
-}
-.tactile-block--blue {
-  top: 48px; right: 15px; width: 112px; height: 147px; border-radius: 29px;
-  background: linear-gradient(135deg, #b3e7f6, #80c8e9);
-  box-shadow: inset 2px 4px 7px #ffffff8c;
-}
-.tactile-block--pill {
-  z-index: 1; left: 8px; top: 104px; width: 245px; height: 120px; border-radius: 65px;
-  background: linear-gradient(125deg, #ffe0ed 0%, #ffb3d5 47%, #a3d7ef 100%);
-  box-shadow: inset 3px 5px 10px #ffffff7d, inset -3px -7px 15px #a481c01a, 0 14px 23px #8f73a024;
-}
-.tactile-art-shadow {
-  position: absolute; left: 42px; bottom: -8px; width: 180px; height: 16px;
-  border-radius: 50%; background: #baa6c54a; filter: blur(10px);
-}
-
 .user-site .account-intro-topics { justify-content: center; gap: 8px; margin-bottom: 20px; }
 .user-site .account-intro-topics li {
   border-color: #f4e5ee; background: #fff; color: #76556d; padding: 7px 12px;
@@ -188,10 +167,6 @@
   .user-site .entry-layout--landing .account-intro > p:not(.account-intro-kicker) { font-size: 13px; }
   .user-site .entry-layout--landing .account-entry { padding: 18px; border-radius: 28px; }
   .tactile-art { height: 116px; width: 190px; margin: 0 auto 15px; }
-  .tactile-block--pink { left: 36px; width: 88px; height: 82px; border-radius: 22px; }
-  .tactile-block--blue { right: 20px; top: 20px; width: 70px; height: 83px; border-radius: 20px; }
-  .tactile-block--pill { top: 48px; left: 16px; width: 158px; height: 70px; border-radius: 40px; }
-  .tactile-art-shadow { width: 115px; left: 36px; bottom: -5px; }
   .user-site .account-intro-topics { margin-bottom: 14px; gap: 5px; }
   .user-site .account-intro-topics li { font-size: 11px; padding: 6px 9px; }
   .user-site .entry-card { border-radius: 25px; }
@@ -200,6 +175,16 @@
   .user-site .mobile-chat-profile { background: #fff7fc; border-color: #eee3ef; }
   .user-site .mobile-chat-profile .identity-card { background: transparent; }
   .user-site .composer { background: #fffaff; border-color: #e8dce9; }
+  .user-site .conversation-top { padding: 8px 14px; }
+  .user-site .conversation-top > .octopus-mascot { width: 32px; height: 32px; }
+  .user-site .conversation-top > span { font-size: 10px; }
+  .user-site .response-bubble { padding: 15px; border-radius: 8px 22px 22px; }
+  .user-site .reply-heading { gap: 8px; margin-bottom: 12px; }
+  .user-site .reply-heading > .octopus-mascot { width: 36px; height: 36px; }
+  .user-site .response-bubble .answer-item > p { font-size: 14px; line-height: 1.9; }
+  .user-site .messages { padding: 18px 13px; }
+  .user-site .welcome-mark { width: 88px; height: 88px; }
+  .user-site .brand-icon > .octopus-mascot { width: 34px; height: 34px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -211,4 +196,98 @@
   .user-site .primary:not(:disabled):hover,
   .user-site .secondary:not(:disabled):hover,
   .user-site .suggestions button:hover { transform: none; }
+}
+
+.octopus-mascot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  flex-shrink: 0;
+  overflow: hidden;
+  mix-blend-mode: multiply;
+}
+.landing-octopus { margin: auto; }
+.user-site .brand-icon > .octopus-mascot { width: 44px; height: 44px; }
+.user-site:has(.chat-layout) {
+  background: radial-gradient(ellipse at 0 0, #ffe4f0, transparent 65%),
+    radial-gradient(ellipse at 100% 65%, #dff2ff, transparent 65%), #faf5fc;
+}
+.user-site .conversation {
+  background: linear-gradient(155deg, #fff4fa, #f5f7ff);
+  border: 1px solid #fff;
+}
+.user-site .conversation-top {
+  gap: 10px;
+  background: linear-gradient(110deg, #fce2f0, #e8efff);
+  border-bottom: 1px solid #efdaea;
+}
+.user-site .conversation-top > .octopus-mascot { width: 38px; height: 38px; }
+.user-site .conversation-top > b { color: #6a4168; }
+.user-site .conversation-top > span { color: #775f80; }
+.user-site .messages { background: transparent; }
+.user-site .response-bubble {
+  padding: 20px;
+  border: 1px solid #eeddeb;
+  border-radius: 8px 26px 26px;
+  background: linear-gradient(140deg, #fffafd, #f9f5ff);
+  box-shadow: 0 7px 24px #9a75aa0b;
+  overflow-wrap: anywhere;
+}
+.reply-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.reply-heading > .octopus-mascot { width: 42px; height: 42px; }
+.reply-heading > div { display: grid; gap: 3px; }
+.reply-heading b { color: #795171; font-size: 13px; font-weight: 600; }
+.reply-heading small { color: #8c7b93; font-size: 10px; }
+.user-site .response-bubble .answer-title { margin-bottom: 8px; }
+.user-site .response-bubble .answer-title > strong { display: none; }
+.user-site .response-bubble .answer-title > .tag {
+  padding: 3px 9px;
+  border-color: #efdeed;
+  border-radius: 999px;
+  background: #f8eaf5;
+  color: #855477;
+  font-size: 10px;
+}
+.user-site .response-bubble .answer-item > p {
+  font-size: 15px;
+  line-height: 1.95;
+  color: #453b50;
+  margin-top: 10px;
+}
+.user-site .response-bubble .answer-item { border-color: #efe2ef; }
+.user-site .response-bubble .citation {
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: #f1edf9;
+  border-color: #e7def0;
+  color: #695472;
+}
+.user-site .response-bubble .citation b { color: #66506f; }
+.user-site .response-bubble .answer-notice { color: #86768f; font-size: 11px; line-height: 1.7; }
+.user-site .welcome-mark {
+  width: 105px;
+  height: 105px;
+  margin: 0 auto 18px;
+  background: none;
+  box-shadow: none;
+}
+.user-site .welcome h2 { color: #65415f; }
+.user-site .composer {
+  background: #fff8fd;
+  border-top: 1px solid #eddaed;
+}
+
+
+@media (max-width: 760px) {
+  .user-site .response-bubble { padding: 15px; border-radius: 8px 22px 22px; }
+  .user-site .response-bubble .answer-item > p { font-size: 14px; line-height: 1.9; }
+  .user-site .conversation-top > .octopus-mascot { width: 32px; height: 32px; }
+  .user-site .conversation-top > span { display: none; }
+  .user-site .welcome-mark { width: 88px; height: 88px; }
+  .tactile-art { width: 160px; height: 140px; }
 }

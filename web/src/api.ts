@@ -30,6 +30,62 @@ export type Citation = { chunk_id: string; document_id: string; title: string; p
 export type Answer = { items: { question: string; status: string; content: string; citations: Citation[] }[]; context?: { business_year: number; admission_year?: number; followup_question?: string }; notice?: string }
 export type Question = { id: string; text: string; status: string; answer: Answer; created_at: string; progress?: 'received' | 'searching' | 'checking' | 'composing' | null; snapshot?: Profile; alert: null | { message: string; mail_mode: string; status: string; notice: string } }
 
+type AnswerEvent =
+  | { type: 'progress'; stage: NonNullable<Question['progress']> }
+  | { type: 'item'; index: number; item: Answer['items'][number] }
+  | { type: 'delta'; index: number; text: string }
+  | { type: 'complete'; question: Question }
+
+export async function streamAnswer(id: string, receive: (event: AnswerEvent) => void, signal: AbortSignal) {
+  const response = await fetch('/api/questions/' + encodeURIComponent(id) + '/stream', {
+    credentials: 'same-origin', headers: { Accept: 'text/event-stream' }, signal,
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}))
+    throw new ApiError(data.detail ?? '回答连接失败，请重试。', response.status)
+  }
+  if (!response.body) throw new Error('浏览器无法读取回答，请检查回答状态。')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completed = false
+  try {
+    while (!completed) {
+      const { value, done } = await reader.read()
+      buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n')
+      let boundary: number
+      while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const lines = frame.split('\n')
+        const kind = lines.find(line => line.startsWith('event: '))?.slice(7)
+        const payload = lines.filter(line => line.startsWith('data: ')).map(line => line.slice(6)).join('\n')
+        if (!kind || !payload) continue
+        const data = JSON.parse(payload)
+        if (kind === 'error') throw new Error(data.message)
+        if (kind === 'progress') receive({ type: 'progress', stage: data.stage })
+        if (kind === 'item') receive({ type: 'item', index: data.index, item: data.item })
+        if (kind === 'delta') {
+          receive({ type: 'delta', index: data.index, text: data.text })
+          // Keep characters visibly separate even when a proxy batches frames.
+          await new Promise<void>(resolve => setTimeout(resolve, 12))
+          signal.throwIfAborted()
+        }
+        if (kind === 'complete') {
+          receive({ type: 'complete', question: data })
+          completed = true
+          break
+        }
+      }
+      if (done) break
+    }
+    if (!completed) throw new Error('回答连接中断，可点击“检查回答状态”恢复。')
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
+}
+
 type WeeklyMail = { status: string; week_start: string; sent_at: string | null; attempts: number }
 export type Occurrence = { issue_id: string; question_id: string; question: string; subquestion: string; snapshot: Profile; context: { business_year: number; admission_year: number | null }; answer: Answer; created_at: string; weekly_mail: WeeklyMail | null }
 export type History = { at: string; by?: string; note?: string; state?: string; action?: string }

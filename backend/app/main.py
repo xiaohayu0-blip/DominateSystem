@@ -8,7 +8,7 @@ from datetime import date
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
@@ -19,6 +19,7 @@ from .config import settings
 from .db import SessionLocal, get_db, now
 from .qa import context_for
 from .progress import question_progress
+from .streaming import answer_events
 from .embeddings import BGE_MODEL, bge_model
 from .retrieval import build_chunks, index_bge
 from .schemas import (DocumentMeta, EventUpdate, FormalReply, IssueUpdate, LoginInput, MergeInput,
@@ -278,6 +279,26 @@ def get_question(question_id: str, person=Depends(user), db: DBSession = Depends
     if q.registration_id != person.id:
         raise HTTPException(404, "记录不存在或无权访问")
     return question_response(db, q)
+
+
+@app.get("/api/questions/{question_id}/stream")
+def stream_question(question_id: str, request: Request, person=Depends(user),
+                    db: DBSession = Depends(get_db)):
+    q = required(db, m.Question, question_id)
+    if q.registration_id != person.id:
+        raise HTTPException(404, "记录不存在或无权访问")
+    registration_id = person.id
+    db.close()
+
+    def load():
+        with SessionLocal() as stream_db:
+            saved = stream_db.get(m.Question, question_id)
+            if not saved or saved.registration_id != registration_id:
+                return None
+            return question_response(stream_db, saved)
+
+    return StreamingResponse(answer_events(load, request.is_disconnected), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/sources/{chunk_id}")
