@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from app import conversation as chat
 from app.config import settings
@@ -163,7 +164,7 @@ def test_planner_receives_history_and_rejects_unknown_routes(monkeypatch):
     seen = []
     def model(self, system, payload):
         seen.append(payload)
-        return {'tasks': [{'question': '大二能申请奖学金吗', 'kind': 'campus'}]}
+        return {'tasks': [{'question': '大二能申请奖学金吗', 'kind': 'campus', 'clauses': [0]}]}
     monkeypatch.setattr(DeepSeekModel, 'request_json', model)
     with SessionLocal() as db:
         tasks = real_plan(db, '大二可以吗', {'history': [{'role': 'user', 'content': '奖学金'}]})
@@ -191,3 +192,37 @@ def test_resolved_followup_year_is_used_for_policy_scope(monkeypatch):
     with SessionLocal() as db:
         chat.answer_turn(db, '这项申请材料还有要求吗', {'business_year': 2026, 'selected_year': None})
     assert seen[0]['business_year'] == 2024 and seen[0]['selected_year'] == 2024
+
+
+@pytest.mark.parametrize('first,followup', [
+    ('当寝室长能加综测分吗？', '能加多少啊？'),
+    ('奖学金能申请吗？', '那需要哪些材料？'),
+    ('病假可以请吗？', '具体怎么办理？'),
+    ('补贴能领取吗？', '什么时候发放？'),
+])
+def test_router_rejoins_subjectless_followup_before_answering(monkeypatch, first, followup):
+    text = first + followup
+    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {'tasks': [
+        {'question': first, 'kind': 'campus', 'clauses': [0]},
+        {'question': first + followup, 'kind': 'campus', 'clauses': [1]}]})
+    with SessionLocal() as db:
+        tasks = real_plan(db, text, {})
+    assert len(tasks) == 1
+    assert first in tasks[0]['question'] and followup in tasks[0]['question']
+
+
+def test_router_keeps_named_independent_topics_separate(monkeypatch):
+    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {'tasks': [
+        {'question': '寝室长加几分？', 'kind': 'campus', 'clauses': [0]},
+        {'question': '病假要交哪些材料？', 'kind': 'campus', 'clauses': [1]}]})
+    with SessionLocal() as db:
+        tasks = real_plan(db, '寝室长加几分？病假要交哪些材料？', {})
+    assert len(tasks) == 2
+
+
+def test_router_cannot_drop_current_question_clauses(monkeypatch):
+    from app.qa import InvalidEvidence
+    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {'tasks': [
+        {'question': '寝室长加几分？', 'kind': 'campus', 'clauses': [0]}]})
+    with SessionLocal() as db, pytest.raises(InvalidEvidence):
+        real_plan(db, '寝室长加几分？病假要交哪些材料？', {})
