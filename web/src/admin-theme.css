@@ -1,0 +1,170 @@
+/* The management workspace shares Xiaoba's soft palette with the student site. */
+.admin-entry, .admin-shell {
+  --forest: #674a70;
+  --green: #526c8d;
+  --paper: #fff;
+  --line: #e7deeb;
+  --muted: #70677b;
+  --soft: #f5eff8;
+  color: #352e41;
+  background: radial-gradient(ellipse at 0 0, #fce5f0, transparent 55%), radial-gradient(ellipse at 100% 20%, #deefff, transparent 65%), #faf7fc;
+  min-height: calc(100dvh - 32px);
+}
+.admin-entry { padding: 48px 20px 64px; display: grid; place-items: center; }
+.admin-login {
+  width: 100%; max-width: 470px; margin: 0; padding: 30px 38px 38px;
+  background: #ffffffdf; border: 1px solid #fff; border-radius: 32px;
+  box-shadow: 0 18px 60px #85668516, inset 0 1px 0 #fff;
+}
+.admin-login > .brand-icon { display: block; width: 112px; height: 112px; margin: 16px auto 8px; background: none; border: 0; }
+.admin-login .brand-icon > .octopus-mascot,
+.admin-sidebar .brand-icon > .octopus-mascot { width: 100%; height: 100%; aspect-ratio: 1; }
+.admin-login h1 { color: #493551; font-size: 30px; font-weight: 700; margin: 8px 0; }
+.admin-login .eyebrow { color: #88648c; margin-top: 12px; }
+.admin-login .muted { font-size: 13px; }
+.admin-login form { margin-top: 26px; }
+.admin-shell { grid-template-columns: 252px minmax(0, 1fr); }
+.admin-sidebar {
+  background: #fffcffed; border-color: #e9dfec; padding: 30px 20px;
+  box-shadow: 5px 0 30px #937b9a06; overflow-y: auto;
+}
+.admin-sidebar .brand { color: #503c59; font-size: 16px; letter-spacing: 0; gap: 10px; }
+.admin-sidebar .brand-icon { width: 52px; height: 52px; border: 0; background: none; }
+.admin-sidebar .brand small { color: #7f6c89; font-size: 11px; }
+.admin-sidebar .sidebar-caption { color: #8b7b92; letter-spacing: .15em; margin: 36px 14px 12px; }
+.admin-sidebar nav { gap: 9px; }
+.admin-sidebar nav button {
+  color: #71617b; border: 1px solid transparent; border-radius: 17px; padding: 13px 14px;
+  min-height: 48px; font-size: 14px; transition: background .18s, transform .18s;
+}
+.admin-sidebar nav button:hover { background: #f7f0f8; }
+.admin-sidebar nav button[aria-current=page] {
+  background: linear-gradient(110deg, #fbdceb, #e7edfd); color: #624366;
+  border: 1px solid #fff; padding-left: 14px; font-weight: 600; box-shadow: 0 5px 14px #b69ac119;
+}
+.admin-sidebar .sidebar-bottom { border-color: var(--line); color: var(--muted); }
+.admin-top {
+  background: #fffafdde; border-color: #ece3ee; height: 78px; padding: 0 36px;
+  color: #7c6884; font-size: 13px;
+}
+.admin-content { padding: 34px 36px 64px; }
+.admin-shell .page-title { align-items: center; margin-bottom: 26px; gap: 16px; }
+.admin-shell .page-title h1 { color: #493551; font-size: 29px; font-weight: 700; }
+.admin-shell .eyebrow { color: #8b6b91; }
+.admin-shell .muted, .admin-shell small { color: var(--muted); }
+.admin-shell .overview-banner {
+  background: linear-gradient(115deg, #fce3ef, #eef0ff 62%, #dff1fc);
+  border: 1px solid #fff; border-radius: 28px; padding: 24px 32px; margin-bottom: 24px;
+  box-shadow: 0 8px 30px #917ca211; min-height: 170px;
+}
+.admin-shell .overview-banner h2 { color: #5f4269; font-size: 27px; font-weight: 700; }
+.admin-shell .overview-banner p { color: #705e7d; font-size: 14px; }
+.admin-shell .overview-banner strong { color: #5e426a; }
+.admin-shell .admin-overview-mascot { width: 134px; height: 134px; margin-left: 20px; }
+.admin-shell .stats { gap: 16px; margin-bottom: 24px; }
+.admin-shell .stat-card {
+  border: 1px solid #fff; border-radius: 23px; padding: 22px;
+  background: #fff8fc; box-shadow: 0 6px 24px #8e729611;
+}
+.admin-shell .stat-card:nth-child(2) { background: #f2f7ff; }
+.admin-shell .stat-card:nth-child(3) { background: #f6f1fe; }
+.admin-shell .stat-card:nth-child(4) { background: #fff5ee; }
+.admin-shell .stat-card span { font-size: 12px; color: #73627d; }
+.admin-shell .stat-card strong { color: #584366; font-size: 35px; font-weight: 650; margin-top: 12px; }
+.admin-shell .stat-card svg { color: #947ba1; }
+.admin-shell .panel, .admin-shell .issue-card, .admin-shell .filter-bar, .admin-shell .empty {
+  background: #ffffffed; border: 1px solid #e9e1ee; border-radius: 24px;
+  box-shadow: 0 6px 24px #927b9a0b;
+}
+.admin-shell .panel { padding: 26px; }
+.admin-shell h2, .admin-shell h3, .admin-shell h4 { color: #52405e; }
+.admin-shell .filter-bar { padding: 18px 22px; gap: 12px; margin-bottom: 22px; }
+.admin-shell .issue-summary { border-radius: 23px; color: #51405e; }
+.admin-shell .issue-body { border-color: var(--line); background: #fffcff; border-radius: 0 0 23px 23px; }
+.admin-shell .occurrence, .admin-shell .retest, .admin-shell .source-preview, .admin-shell .child-summary {
+  background: #f8f5fc; border-color: #e7deec; border-radius: 16px;
+}
+.admin-shell .profile-detail { background: #f6f4fc; border-color: var(--line); border-radius: 16px; }
+.admin-shell .timeline { border-color: #e5d8ed; }
+.admin-shell .timeline li::before { background: #ae8cbb; }
+.admin-shell .boundary { color: #7a5d3d; background: #fff8eb; border: 1px solid #eddfbf; border-radius: 16px; padding: 14px 18px; }
+.admin-entry input, .admin-shell input, .admin-shell select, .admin-shell textarea {
+  background: #fdfbff; color: #443a50; border: 1px solid #ded8e8; border-radius: 14px; min-height: 44px;
+}
+.admin-shell input[type=file] { max-width: 100%; padding: 10px; }
+.admin-shell input::file-selector-button { border: 1px solid #e3d8e9; background: #f5eafa; color: #654c71; border-radius: 10px; padding: 7px 10px; margin-right: 10px; cursor: pointer; }
+.admin-entry input:focus, .admin-shell input:focus, .admin-shell select:focus, .admin-shell textarea:focus {
+  outline: 2px solid #b697cb; outline-offset: 2px; border-color: #b697cb;
+}
+.admin-entry .field > label, .admin-shell .field > label { color: #6c5877; font-size: 13px; }
+.admin-entry .primary, .admin-shell .primary {
+  background: linear-gradient(115deg, #f6b7d5, #e8b8e3); color: #50324e;
+  border: 1px solid #e8a9cc; box-shadow: inset 0 1px 0 #ffffffa8, 0 4px 0 #b483aa18;
+  border-radius: 999px; min-height: 44px; font-weight: 600;
+}
+.admin-entry .secondary, .admin-shell .secondary {
+  background: linear-gradient(120deg, #fff, #edf3ff); color: #586180;
+  border: 1px solid #d9dff0; border-radius: 999px; min-height: 44px;
+  box-shadow: inset 0 1px 0 #fff, 0 3px 0 #8795bf10;
+}
+.admin-entry button:active, .admin-shell button:active { transform: translateY(1px); }
+.admin-entry button:focus-visible, .admin-shell button:focus-visible, .admin-shell summary:focus-visible { outline: 2px solid #926ba7; outline-offset: 3px; }
+.admin-entry .text-button, .admin-shell .text-button { color: #73587f; min-height: 44px; }
+.admin-shell .tag { border-radius: 999px; background: #f3edf7; border-color: #e3d8eb; color: #735a81; }
+.admin-shell .tag-open, .admin-shell .tag-failed, .admin-shell .tag-validation_failed, .admin-shell .tag-system_error { background: #fff0f0; border-color: #ebc8cb; color: #9b3e49; }
+.admin-shell .tag-following, .admin-shell .tag-in_progress, .admin-shell .tag-awaiting_material, .admin-shell .tag-awaiting_retest, .admin-shell .tag-pending { background: #fff7e8; border-color: #eddbb4; color: #88621f; }
+.admin-shell .tag-completed, .admin-shell .tag-closed, .admin-shell .tag-published, .admin-shell .tag-ready, .admin-shell .tag-sent { background: #edf8f3; border-color: #c7e5d8; color: #39725c; }
+.admin-shell .tag-dismissed { background: #f0f1f4; border-color: #dadde4; color: #69717c; }
+.admin-shell .error, .admin-entry .error { color: #963e48; background: #fff1f1; border: 1px solid #e6c3c8; border-radius: 14px; }
+.admin-shell :is(p, h3, small, code, summary) { overflow-wrap: anywhere; }
+@media (max-width: 1100px) { .admin-shell .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .admin-entry { padding: 24px 16px 40px; }
+  .admin-login { padding: 22px 24px 28px; border-radius: 28px; }
+  .admin-login > .brand-icon { display: block; width: 100px; height: 100px; }
+  .admin-shell { display: block; }
+  .admin-shell .admin-sidebar.expanded {
+    display: flex; inset: 32px auto 0 0; width: min(320px, calc(100vw - 24px));
+    height: calc(100dvh - 32px); padding: 24px 18px; border-radius: 0 26px 26px 0;
+    box-shadow: 12px 0 50px #59426830; background: #fffaff; z-index: 30;
+  }
+  .admin-shell .admin-sidebar.expanded nav { display: flex; flex-direction: column; }
+  .admin-shell .admin-sidebar.expanded .brand { padding-right: 26px; font-size: 14px; }
+  .admin-shell .admin-sidebar.expanded ~ .admin-main .mobile-menu {
+    position: fixed; top: 42px; left: min(266px, calc(100vw - 78px)); right: auto;
+    z-index: 31; background: #f4e8f6; border-radius: 14px; color: #6b4b79;
+  }
+  .admin-shell .admin-top { height: 66px; padding: 0 14px; gap: 8px; }
+  .admin-shell .mobile-menu { min-width: 44px; min-height: 44px; justify-content: center; align-items: center; }
+  .admin-shell .admin-top > span { font-size: 11px; }
+  .admin-shell .admin-top .text-button { font-size: 11px; gap: 5px; }
+  .admin-shell .admin-content { padding: 24px 16px 40px; }
+  .admin-shell .page-title h1 { font-size: 25px; }
+  .admin-shell .page-title > .muted { display: none; }
+  .admin-shell .overview-banner { padding: 20px; border-radius: 24px; min-height: 150px; }
+  .admin-shell .overview-banner h2 { font-size: 23px; }
+  .admin-shell .overview-banner p { font-size: 12px; }
+  .admin-shell .admin-overview-mascot { width: 90px; height: 90px; margin-left: 10px; }
+  .admin-shell .stats { gap: 12px; }
+  .admin-shell .stat-card { padding: 18px 16px; border-radius: 20px; }
+  .admin-shell .stat-card span { font-size: 11px; }
+  .admin-shell .stat-card strong { font-size: 31px; }
+  .admin-shell .panel { padding: 20px; border-radius: 22px; }
+  .admin-shell .filter-bar { padding: 16px; gap: 10px; border-radius: 20px; }
+  .admin-shell .filter-bar select { width: calc(50% - 5px); min-width: 0; }
+  .admin-shell .filter-bar .field { width: 100%; min-width: 0; }
+  .admin-shell .filter-bar .muted { min-width: 0; flex-basis: 100%; }
+  .admin-shell input, .admin-shell select, .admin-shell textarea, .admin-entry input { font-size: 16px; }
+  .admin-shell .issue-summary { padding: 20px 16px; }
+  .admin-shell .upload-panel form { min-width: 0; width: 100%; flex-wrap: wrap; }
+  .admin-shell .upload-panel input { width: 100%; min-width: 0; }
+  .admin-shell .upload-panel .primary { width: 100%; }
+  .admin-shell .merge-controls select { min-width: 0; width: 100%; }
+}
+@media (max-width: 360px) {
+  .admin-shell .admin-content { padding-left: 12px; padding-right: 12px; }
+  .admin-shell .overview-banner { padding: 18px; }
+  .admin-shell .admin-overview-mascot { width: 68px; height: 68px; }
+  .admin-shell .stat-card { padding: 16px 12px; }
+  .admin-login { padding: 22px 20px; }
+}
