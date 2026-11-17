@@ -8,7 +8,8 @@ from sqlalchemy import select, text, update
 
 from .db import SessionLocal, now
 from .models import Admin, ChildEntry, Document, EmergencyEvent, Issue, MailJob, Question, WeeklyMailItem
-from .qa import answer_question, retrieval_query
+from .qa import retrieval_query
+from .conversation import answer_turn as answer_question
 from .progress import report_progress, track_progress
 from .retrieval import retriever
 from .security import audit
@@ -83,7 +84,9 @@ def finish_question(question_id, factory=SessionLocal):
                                      "content": "服务暂时不可用，已记录技术故障。", "citations": []}],
                           "context": q.context, "model_mode": q.model_mode}
             report_progress("composing")
-            failed_items = [item for item in answer["items"] if item["status"] not in {"answered", "historical_reference"}]
+            resolved_context = answer.get("context", q.context)
+            failed_items = [item for item in answer["items"] if item["status"] not in {
+                "answered", "historical_reference", "general_answer", "web_answer"}]
             if failed_items:
                 # End the retrieval transaction before acquiring the grouping lock.
                 db.rollback()
@@ -91,6 +94,7 @@ def finish_question(question_id, factory=SessionLocal):
                 q = db.get(Question, question_id, populate_existing=True)
                 if not q or q.status != "pending":
                     return
+                q.context = resolved_context
                 roots = {}
                 for issue, context in db.execute(open_issue_roots()).all():
                     roots.setdefault(issue_group_key(issue.text, issue.reason, context), issue)
@@ -105,6 +109,7 @@ def finish_question(question_id, factory=SessionLocal):
                         roots[key] = issue
                     else:
                         root.revision += 1
+            q.context = resolved_context
             q.answer, q.status, q.completed_at = answer, "complete", now()
             # Clarification can only resolve within same registration + explicit previous question.
             previous = db.get(Question, q.context.get("previous_id", ""))

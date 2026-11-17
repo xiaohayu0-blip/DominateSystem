@@ -27,7 +27,8 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
 export type Child = { name: string; phone: string; major: string; class_name: string; relationship: string }
 export type Profile = { id?: string; role: 'student' | 'parent'; name: string; phone: string; major: string; class_name: string; children: Child[] }
 export type Citation = { chunk_id: string; document_id: string; title: string; publisher: string; version: string; location: string; excerpt: string; business_year: number | null; admission_year: number | null; effective_from: string | null; effective_to: string | null; source_status?: string; material_mode: string }
-export type Answer = { items: { question: string; status: string; content: string; citations: Citation[] }[]; context?: { business_year: number; admission_year?: number; followup_question?: string }; notice?: string }
+export type WebSource = { id: string; title: string; url: string; excerpt: string; published_at: string | null; retrieved_at: string }
+export type Answer = { items: { question: string; status: string; content: string; citations: Citation[]; web_sources?: WebSource[] }[]; context?: { business_year: number; admission_year?: number; followup_question?: string }; notice?: string }
 export type Question = { id: string; text: string; status: string; answer: Answer; created_at: string; progress?: 'received' | 'searching' | 'checking' | 'composing' | null; snapshot?: Profile; alert: null | { message: string; mail_mode: string; status: string; notice: string } }
 
 type AnswerEvent =
@@ -95,6 +96,7 @@ export type Weekly = { mail_enabled: boolean; weekly_mail: WeeklyMail | null; st
 export type Emergency = { id: string; text: string; state: string; snapshot: Profile; history: History[]; created_at: string; mail: { id: string; mode: string; status: string; body: string; attempts: number; error_code: string; attempt_history: { at: string; result: string }[] } }
 export type Modes = { environment: string; model: string; material: string; mail: string; embedding?: string }
 export const label: Record<string, string> = {
+  general_answer: '小八聊聊', web_answer: '联网参考',
   answered: '有据可查', historical_reference: '历史资料参考', missing_material: '待补充资料', needs_clarification: '待澄清', document_conflict: '资料冲突',
   validation_failed: '证据校验失败', system_error: '技术故障', out_of_scope: '服务范围外',
   open: '待处理', in_progress: '处理中', awaiting_material: '待补充资料', awaiting_retest: '待复测', completed: '已解决', dismissed: '无需处理',

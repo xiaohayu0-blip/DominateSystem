@@ -33,6 +33,10 @@ def simulated_question_planner(monkeypatch):
     # explicitly with supplied partitions, adapter transport, and a separate live corpus.
     monkeypatch.setattr(DeepSeekModel, "group_questions", lambda self, text, clauses: {
         "groups": [list(range(len(clauses)))]})
+    from app import conversation
+    monkeypatch.setattr(conversation, "plan_turn", lambda db, text, context: [
+        {"question": text, "kind": "campus"}])
+    monkeypatch.setattr(conversation, "search_web", lambda *args, **kwargs: [])
 
 
 @pytest.fixture(autouse=True)

@@ -95,6 +95,8 @@ class DeepSeekModel:
             '{"answer":"直接回答问题的简短说明","selections":[{"chunk_id":"已给出的ID","start_line":1,"end_line":2}]}。'
             "行号从1开始，起止均包含。只需一行时起止相同。如单行过长，可以改用 quote 字段提供逐字原文短摘录。"
             "引用只选择必要原文，保留关键条件，不得断章取义。证据不足时返回空数组。"
+            "若只能回答部分诉求，answer保留有依据的部分，selections保留对应原文；"
+            "另用missing_questions数组列出尚无充分依据的自足问句，不把未回答的部分伪装成已回答。"
             "最后检查表达：除前述严肃事项外，answer应有自然口语开头、清楚的短段和1个表情或颜文字。"
             "不输出没有表情的公文式摘要；上述表达要求服从事实准确性，不能为幽默删改制度条件或突破字数限制。"
         )
@@ -163,10 +165,23 @@ def context_for(data, previous=None):
     grade = re.search(GRADE_WORD, data.text)
     if admission is None and grade:
         admission = int(grade.group(1))
-    prior = previous.context if previous else {}
+    history = []
+    if previous:
+        history = list(previous.context.get("history", []))[-4:]
+        history += [{"role": "user", "content": scrub(previous.text)},
+                    {"role": "assistant", "content": scrub("\n".join(
+                        item.get("content", "") for item in previous.answer.get("items", [])))[:2000]}]
+    dependent = bool(is_dependent_question(data.text.rstrip("？?")) or re.fullmatch(
+        r"(?:那么|那|换成|如果是)?\s*(?:大[一二三四](?:可以吗|能申请吗|呢)|"
+        r"(?:20)?\d{2}年(?:度)?(?:呢)?|20\d{2}级(?:呢)?|"
+        r"(?:国家|省|校|院)级[一二三]等奖(?:呢)?|\d+人(?:呢)?|"
+        r"[特一二三]等奖(?:或同级奖)?|(?:智育|综测|德育)(?:排名)?(?:分|积分)?)[？?。！!]*", data.text))
+    prior = previous.context if previous and dependent else {}
     result = {"business_year": year or prior.get("business_year") or current_year,
             "selected_year": year or prior.get("selected_year"),
             "admission_year": admission if year is not None else admission or prior.get("admission_year")}
+    if history:
+        result["history"] = history
     if not previous or not previous.answer.get("items"):
         return result
     parts = split_questions(data.text)
@@ -196,6 +211,8 @@ def context_for(data, previous=None):
             result.update(business_year=chosen_year, selected_year=chosen_year, admission_year=None)
     elif re.fullmatch(AWARD_WORD, short) and re.search(AWARD_WORD, anchor[0]):
         topic = re.sub(AWARD_WORD, short, anchor[0], count=1)
+    elif dependent:
+        topic = f"{anchor[0]}，追问：{parts[0]}"
     else:
         return result
     if topic:
@@ -697,6 +714,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                             "citations": citations})
             continue
         reason = "" if cohort_options or special == "roster_match" else special
+        missing_questions = []
         content = ""
         scope_prefix, historical = scope_notice(citations, context)
         prefix = (catalog_note + "\n\n" if catalog_note else "") + scope_prefix
@@ -747,6 +765,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                             selected, citations, cohort_options=cohort_options, deepseek=deepseek,
                             assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
                             catalog_grades=catalog_grades, answer_budget=answer_budget)
+                        missing_questions = selected.get("missing_questions", [])
                     except InvalidEvidence as exc:
                         if not isinstance(model, DeepSeekModel):
                             raise
@@ -762,6 +781,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                             selected, citations, cohort_options=cohort_options, deepseek=True,
                             assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
                             catalog_grades=catalog_grades, answer_budget=answer_budget)
+                        missing_questions = selected.get("missing_questions", [])
                 finally:
                     semaphore.release()
             except MissingEvidence:
@@ -787,7 +807,9 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                 content, displayed_citations = reference
                 reason = "historical_reference"
         results.append({"question": part, "status": reason or "answered", "content": content,
-                        "citations": displayed_citations})
+                        "citations": displayed_citations,
+                        "missing_questions": [q for q in missing_questions[:4] if isinstance(q, str) and 0 < len(q) <= 2000]
+                        if isinstance(missing_questions, list) and not reason else []})
     for item in results:
         if len(item["content"]) > MAX_ANSWER_CHARS:
             logger.warning("answer_length_guard chars=%s", len(item["content"]))

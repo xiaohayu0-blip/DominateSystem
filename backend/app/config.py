@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     model_timeout_seconds: int = 25
     model_concurrency: int = 2
     model_daily_limit: int = 500
+    school_name: str = "武汉纺织大学"
+    school_official_domain: str = "wtu.edu.cn"
     mail_mode: Literal["mock", "smtp"] = "mock"
     allow_real_email: bool = False
     smtp_host: str = ""
