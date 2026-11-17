@@ -5,6 +5,7 @@ import { ArrowUpRight, ArrowUp, BookOpen, Landmark, FileText, ChevronRight, Shie
 import { api, ApiError, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type Modes, type Answer, type History } from './api'
 import './style.css'
 import './interface.css'
+import './tactile.css'
 
 function ErrorBox({ error }: { error: unknown }) { return error ? <div role="alert" className="error">{error instanceof Error ? error.message : String(error)}</div> : null }
 function Empty({ text = '这里还没有记录。' }: { text?: string }) { return <div className="empty"><Inbox size={26}/><p>{text}</p></div> }
@@ -206,7 +207,7 @@ function UserApp() {
     {loading ? <main id="main-content" className="empty">正在连接服务…</main> : !profile || editing ? <main id="main-content" className={landing ? 'entry-layout entry-layout--landing' : 'entry-layout'}>
       {!profile && <section className="page-intro account-intro" aria-labelledby="account-intro-title">
         <h1 id="account-intro-title">制度咨询与办理指引</h1>
-        <p className="account-intro-kicker">管理学院 · 制度服务平台</p>
+        <p className="account-intro-kicker">管理学院 · 你的校园小助手</p>
         <p>学生和家长可在这里查询学院制度，了解请假、综合测评和奖学金评定的办理条件。</p>
         {landing && <>
           <p>提问时可以注明业务年度。答复会列出引用的文件和条文位置，方便你核对原文及适用范围。</p>
@@ -220,6 +221,7 @@ function UserApp() {
       </div><div className="boundary"><strong>服务范围</strong><p>本平台提供制度信息参考，不代替资格认定、审批或评审决定。</p></div></details>
       {landing && <a className="landing-admin-link" href="#/admin">管理工作台 <ArrowUpRight size={12}/></a>}</aside>
       <div className="account-entry">
+        {landing && <div className="tactile-art" aria-hidden="true"><span className="tactile-block tactile-block--pink"/><span className="tactile-block tactile-block--blue"/><span className="tactile-block tactile-block--pill"/><span className="tactile-art-shadow"/></div>}
         {landing && <ul className="account-intro-topics" aria-label="可咨询事项">
           <li>学生请假</li><li>综合测评</li><li>奖学金评定</li>
         </ul>}

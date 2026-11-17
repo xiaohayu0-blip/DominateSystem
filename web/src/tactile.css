@@ -1,0 +1,214 @@
+/* Soft physical surfaces inspired by the user's tactile pink/blue reference. */
+.user-site {
+  --surface: #fffcfe;
+  --canvas: #f8f6fb;
+  --tint: #f5eaf4;
+  --ink: #30273c;
+  --line: #e9e0ec;
+  --soft-shadow: 0 18px 50px #705d8910, inset 0 2px 2px #fff;
+  min-height: calc(100dvh - 36px);
+  color: var(--ink);
+  background: radial-gradient(ellipse at 5% 0%, #ffe7f1 0, transparent 48%),
+    radial-gradient(ellipse at 100% 40%, #def2ff 0, transparent 55%), #f8f7fb;
+}
+
+.user-site .site-header {
+  max-width: 1160px;
+  min-height: 92px;
+  margin: 20px auto 0;
+  padding: 16px 30px;
+  border: 1px solid #fff;
+  border-radius: 28px;
+  background: #ffffffb8;
+  box-shadow: 0 10px 35px #75668c08, inset 0 2px 0 #fff;
+}
+
+.user-site .brand { color: #30273c; }
+.user-site .brand small { color: #756980; }
+.user-site .brand-icon,
+.user-site .welcome-mark {
+  background: linear-gradient(135deg, #ffb6d8, #ccd3f3 63%, #a7ddf2);
+  color: #423548;
+  box-shadow: inset 0 2px 4px #ffffffb3, 0 5px 12px #c4a9cf2b;
+}
+
+.user-site .public-nav a[aria-current=page] {
+  background: #fff;
+  color: #65506b;
+  box-shadow: 0 4px 12px #8b719618;
+}
+
+.user-site .entry-layout { padding-top: 44px; gap: 32px 60px; }
+.user-site .entry-layout--landing {
+  grid-template-columns: 1.15fr 1fr;
+  align-items: center;
+  padding-top: 64px;
+  padding-bottom: 64px;
+}
+.user-site .entry-layout--landing .account-intro {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+}
+.user-site .entry-layout--landing .account-intro h1 {
+  max-width: 9ch;
+  font-size: clamp(36px, 4.3vw, 60px);
+  font-weight: 800;
+  letter-spacing: -.045em;
+  line-height: 1.24;
+  color: #271f31;
+  margin-bottom: 18px;
+}
+.user-site .account-intro .account-intro-kicker {
+  color: #8b496e;
+  letter-spacing: .08em;
+}
+.user-site .account-intro > p { color: #655b6e; line-height: 1.85; }
+.user-site .entry-layout--landing .account-intro > p:not(.account-intro-kicker) {
+  max-width: 39ch;
+  font-size: 14px;
+}
+.user-site .entry-layout--landing .entry-intro {
+  grid-column: 1;
+  grid-row: 2;
+  padding: 0;
+}
+.user-site .entry-layout--landing .account-entry {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 100%;
+  padding: 30px;
+  border: 1px solid #fff;
+  border-radius: 38px;
+  background: #ffffffc9;
+  box-shadow: 0 22px 60px #8b72921a, inset 0 2px 2px #fff;
+}
+
+.tactile-art {
+  position: relative;
+  width: 270px;
+  max-width: 100%;
+  height: 235px;
+  margin: 4px auto 30px;
+}
+.tactile-block { display: block; position: absolute; }
+.tactile-block--pink {
+  top: 0; left: 40px; width: 148px; height: 164px; border-radius: 33px;
+  background: linear-gradient(135deg, #ffcce2, #ffa6d1);
+  box-shadow: inset 3px 4px 8px #ffffff91, 0 12px 20px #c06b9d16;
+}
+.tactile-block--blue {
+  top: 48px; right: 15px; width: 112px; height: 147px; border-radius: 29px;
+  background: linear-gradient(135deg, #b3e7f6, #80c8e9);
+  box-shadow: inset 2px 4px 7px #ffffff8c;
+}
+.tactile-block--pill {
+  z-index: 1; left: 8px; top: 104px; width: 245px; height: 120px; border-radius: 65px;
+  background: linear-gradient(125deg, #ffe0ed 0%, #ffb3d5 47%, #a3d7ef 100%);
+  box-shadow: inset 3px 5px 10px #ffffff7d, inset -3px -7px 15px #a481c01a, 0 14px 23px #8f73a024;
+}
+.tactile-art-shadow {
+  position: absolute; left: 42px; bottom: -8px; width: 180px; height: 16px;
+  border-radius: 50%; background: #baa6c54a; filter: blur(10px);
+}
+
+.user-site .account-intro-topics { justify-content: center; gap: 8px; margin-bottom: 20px; }
+.user-site .account-intro-topics li {
+  border-color: #f4e5ee; background: #fff; color: #76556d; padding: 7px 12px;
+}
+.user-site .account-actions { gap: 12px; }
+.user-site .primary,
+.user-site .secondary,
+.user-site .suggestions button,
+.user-site .send-button {
+  transition: transform 240ms cubic-bezier(.22, 1.6, .4, 1), box-shadow 240ms ease;
+}
+.user-site .primary {
+  color: #493049;
+  background: linear-gradient(145deg, #ffd1e5, #f5acd0);
+  border-color: #e9a6c6;
+  box-shadow: inset 0 2px 2px #ffffffa8, 0 4px 0 #d68fb21f, 0 8px 18px #bf799d14;
+}
+.user-site .secondary {
+  color: #4d556e;
+  background: linear-gradient(145deg, #fff, #edf2fc);
+  border-color: #dce3ef;
+  box-shadow: inset 0 2px 2px #fff, 0 4px 0 #a4b2ce1a;
+}
+.user-site button:not(:disabled):active { transform: translateY(2px) scale(.97); }
+.user-site button:focus-visible,
+.user-site a:focus-visible { outline: 3px solid #9a6eac; outline-offset: 4px; }
+.user-site .entry-card,
+.user-site .conversation {
+  border-color: #fff;
+  border-radius: 32px;
+  background: #ffffffed;
+  box-shadow: var(--soft-shadow);
+}
+.user-site .registration-form input,
+.user-site .composer textarea {
+  background: #f8f6fa;
+  border-color: #e8e1ed;
+  box-shadow: inset 0 2px 4px #75648208;
+}
+.user-site .segmented button[aria-pressed=true] { color: #754962; }
+.user-site .identity-card { border-color: #fff; background: #ffffffb8; border-radius: 22px; }
+.user-site .conversation-top { border-color: #f1eaf2; color: #49394f; }
+.user-site .suggestions button { background: #faf6fa; border-color: #f0e6ef; color: #634a68; }
+.user-site .question-bubble {
+  background: linear-gradient(130deg, #fce5f0, #edf0fc);
+  box-shadow: inset 0 1px 1px #fff, 0 4px 12px #a383b00a;
+}
+.user-site .citation { background: #f6f6fb; border-color: #e7e6f0; }
+.user-site .progress-notice { background: #fcf1f8; border-color: #e8c9df; color: #6b4464; }
+.user-site .progress-notice-icon { background: #f7dfee; color: #8c567b; }
+.user-site .progress-notice-dots i { background: #ac75a1; }
+.user-site .composer { border-color: #efe8f1; }
+.user-site .composer .send-button {
+  background: linear-gradient(145deg, #f8b9d7, #bcccec);
+  color: #4b3658;
+  box-shadow: inset 0 2px 2px #ffffff9c, 0 3px 8px #9d71901f;
+}
+.user-site .composer .send-button:disabled { background: #e6e1eb; color: #7a6c83; }
+.user-site footer { border-color: #efe8f1; background: #ffffff75; }
+
+@media (hover: hover) {
+  .user-site .primary:not(:disabled):hover,
+  .user-site .secondary:not(:disabled):hover,
+  .user-site .suggestions button:hover { transform: translateY(-2px); }
+}
+
+@media (max-width: 760px) {
+  .user-site .site-header { margin: 8px 12px 0; padding: 12px 16px; border-radius: 22px; }
+  .user-site .entry-layout--landing { display: flex; padding-top: 14px; gap: 12px; }
+  .user-site .entry-layout--landing .account-intro { padding: 8px 8px 12px; }
+  .user-site .entry-layout--landing .account-intro h1 {
+    max-width: none; font-size: clamp(26px, 7vw, 34px); line-height: 1.3; margin-bottom: 12px;
+  }
+  .user-site .entry-layout--landing .account-intro > p:not(.account-intro-kicker) { font-size: 13px; }
+  .user-site .entry-layout--landing .account-entry { padding: 18px; border-radius: 28px; }
+  .tactile-art { height: 116px; width: 190px; margin: 0 auto 15px; }
+  .tactile-block--pink { left: 36px; width: 88px; height: 82px; border-radius: 22px; }
+  .tactile-block--blue { right: 20px; top: 20px; width: 70px; height: 83px; border-radius: 20px; }
+  .tactile-block--pill { top: 48px; left: 16px; width: 158px; height: 70px; border-radius: 40px; }
+  .tactile-art-shadow { width: 115px; left: 36px; bottom: -5px; }
+  .user-site .account-intro-topics { margin-bottom: 14px; gap: 5px; }
+  .user-site .account-intro-topics li { font-size: 11px; padding: 6px 9px; }
+  .user-site .entry-card { border-radius: 25px; }
+  .user-site .conversation { border-radius: 28px; }
+  .user-site .user-header--chat { background: #fff7fc; }
+  .user-site .mobile-chat-profile { background: #fff7fc; border-color: #eee3ef; }
+  .user-site .mobile-chat-profile .identity-card { background: transparent; }
+  .user-site .composer { background: #fffaff; border-color: #e8dce9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .user-site .primary,
+  .user-site .secondary,
+  .user-site .suggestions button,
+  .user-site .send-button { transition: none; }
+  .user-site button:not(:disabled):active,
+  .user-site .primary:not(:disabled):hover,
+  .user-site .secondary:not(:disabled):hover,
+  .user-site .suggestions button:hover { transform: none; }
+}

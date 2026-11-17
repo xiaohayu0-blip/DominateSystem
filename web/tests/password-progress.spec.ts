@@ -34,6 +34,9 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
     throw new Error('Unexpected API request: ' + path)
   })
   await page.goto('/')
+  await expect(page.locator('.tactile-art')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: `../docs/evidence/tactile-landing-${scenario.name}-20261117.png`, fullPage: true })
   await page.getByRole('button', { name: '注册账号', exact: true }).click()
   await page.getByLabel('本人姓名 *', { exact: true }).fill(profile.name)
   await page.getByLabel('本人手机号 *', { exact: true }).fill(profile.phone)
@@ -49,6 +52,7 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
   await page.getByRole('button', { name: '注册并进入问答' }).click()
   await expect(page.getByRole('textbox', { name: '你的问题' })).toBeVisible()
   expect(registrations).toBe(1)
+  await page.screenshot({ path: `../docs/evidence/tactile-chat-${scenario.name}-20261117.png`, fullPage: true })
   await page.getByRole('textbox', { name: '你的问题' }).fill(question.text)
   await page.getByRole('button', { name: '发送问题', exact: true }).click()
   for (const [stage, text] of Object.entries({ received: '收到问题啦', searching: '正在查找学院资料',
