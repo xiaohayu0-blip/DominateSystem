@@ -69,7 +69,7 @@ export async function streamAnswer(id: string, receive: (event: AnswerEvent) => 
           receive({ type: 'delta', index: data.index, text: data.text })
           // Keep characters visibly separate even when a proxy batches frames.
           await new Promise<void>(resolve => setTimeout(resolve, 12))
-          signal.throwIfAborted()
+          if (signal.aborted) throw new DOMException('请求已取消', 'AbortError')
         }
         if (kind === 'complete') {
           receive({ type: 'complete', question: data })

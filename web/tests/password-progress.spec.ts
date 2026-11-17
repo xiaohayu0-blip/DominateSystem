@@ -3,11 +3,15 @@ import { test, expect } from '@playwright/test'
 for (const scenario of [
   { name: 'desktop', width: 1280, reducedMotion: 'no-preference' },
   { name: 'mobile', width: 390, reducedMotion: 'no-preference' },
+  { name: 'legacy-mobile', width: 390, reducedMotion: 'no-preference' },
   { name: 'reduced-motion', width: 320, reducedMotion: 'reduce' },
 ] as const) {
 test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
   await page.setViewportSize({ width: scenario.width, height: 900 })
   await page.emulateMedia({ reducedMotion: scenario.reducedMotion })
+  if (scenario.name === 'legacy-mobile') await page.addInitScript(() => {
+    Object.defineProperty(AbortSignal.prototype, 'throwIfAborted', { value: undefined, configurable: true })
+  })
   const profile = { id: 'student-progress', role: 'student', name: '进度测试学生', phone: '13800000003',
     major: '工商管理', class_name: '测试一班', children: [] }
   const question = { id: 'question-progress', text: '奖学金申请材料', status: 'pending',
@@ -101,3 +105,29 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
   await page.screenshot({ path: `../docs/evidence/octopus-answer-${scenario.name}-20261117.png`, fullPage: true })
 })
 }
+
+
+test('缺少新取消接口时仍可取消流式读取', async ({ page }) => {
+  await page.route('**/api/**', route => route.fulfill({ status: 401, json: { detail: '请登录' } }))
+  await page.goto('/')
+  const result = await page.evaluate(async () => {
+    Object.defineProperty(AbortSignal.prototype, 'throwIfAborted', { value: undefined, configurable: true })
+    const apiModule = '/src/api.ts'
+    const { streamAnswer } = await import(apiModule)
+    const originalFetch = window.fetch
+    window.fetch = async () => new Response('event: delta\ndata: {"index":0,"text":"测"}\n\n', {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })
+    const controller = new AbortController()
+    let received = 0
+    try {
+      await streamAnswer('cancellation-test', () => { received++; controller.abort() }, controller.signal)
+      return { error: '', received }
+    } catch (error) {
+      return { error: (error as Error).name, received }
+    } finally {
+      window.fetch = originalFetch
+    }
+  })
+  expect(result).toEqual({ error: 'AbortError', received: 1 })
+})
