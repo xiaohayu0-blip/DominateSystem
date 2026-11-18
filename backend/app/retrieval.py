@@ -175,16 +175,26 @@ def procedure_block(rows, query):
 
 class HybridRetriever:
     def search(self, db: Session, text: str, context: dict):
+        from .vocabulary import expand, published_rules
+        original = text
+        expansion = expand(text, context['_vocabulary_rules'] if '_vocabulary_rules' in context else published_rules(db))
+        if expansion['ambiguous']:
+            return [], 'needs_clarification'
+        text = expansion['queries'][-1]
         text = normalize_roster_query(text)
-        for pattern, replacement in ORAL_TOPICS.items():
-            text = re.sub(pattern, replacement, text)
+        # One pass with canonical names first prevents suffix duplication and cascading rules.
+        patterns = [re.escape(t) for t in AWARD_TOPICS] + list(ORAL_TOPICS)
+        oral = re.compile('|'.join(f'(?P<r{i}>{pattern})' for i, pattern in enumerate(patterns)))
+        replacements = list(AWARD_TOPICS) + list(ORAL_TOPICS.values())
+        text = oral.sub(lambda match: replacements[int(match.lastgroup[1:])], text)
         text = normalize_terms(text)
         is_enlistment_eligibility = bool(ENLISTMENT_ELIGIBILITY.fullmatch(text.strip()))
         if is_enlistment_eligibility:
             text = ENLISTMENT_TOPIC
         use_bge = settings().embedding_mode == "bge"
-        qterms = terms(text)
-        qvector = embed_query(text) if use_bge else vector(text)
+        qterms = terms(text) | terms(original)
+        embedding_input = original if original == text else original + '\n' + text
+        qvector = embed_query(embedding_input) if use_bge else vector(embedding_input)
         year = context["business_year"]
         # Use an explicitly chosen year for cohort-scoped evidence when no cohort was specified.
         admission = context.get("admission_year") or context.get("selected_year")

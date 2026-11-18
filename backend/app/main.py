@@ -29,6 +29,7 @@ from .security import (admin, audit, hash_password, issue_session, token_hash,
 from .services import (ensure_evidence, finish_question, issue_data, profile,
                        resolve_issues_after_publish, retest_issue, weekly)
 from .storage import digest, infer_business_year, parse_file, store, unpack_documents, validate_file
+from .vocabulary import router as vocabulary_router
 
 logger = logging.getLogger("dominate")
 limits: dict[str, deque] = defaultdict(deque)
@@ -73,6 +74,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="管理学院制度问答与问题处理系统", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(vocabulary_router)
 
 
 @app.middleware("http")

@@ -4,6 +4,7 @@ from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Tex
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, now, uid
+from . import vocabulary_models  # noqa: F401 -- register additive migration metadata
 
 
 class Registration(Base):
