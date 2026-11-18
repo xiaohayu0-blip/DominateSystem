@@ -3,7 +3,7 @@ import logging
 import re
 import threading
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -14,12 +14,13 @@ from sqlalchemy import func, select
 from .config import settings
 from .competition import TEAM_SIZE_REPLY, competition_score
 from .competition_catalog import competition_classification
-from .evidence_numbers import comparisons, quantities
+from .evidence_numbers import comparisons, quantities, scenario_quantities
 from .models import Chunk, Document, Question
+from .policy_context import clarification_for, policy_query, search_policy_evidence
 from .question_planning import grouped_questions, question_clauses
 from .progress import report_progress
 from .ranking import ranking_answer
-from .retrieval import DATED_BATCH_DEADLINE, GENERIC, citation, normalize_roster_query, retriever, sheet_key, terms
+from .retrieval import DATED_BATCH_DEADLINE, GENERIC, citation, normalize_roster_query, sheet_key, terms
 from .schemas import scrub
 
 MAX_ANSWER_CHARS = 500
@@ -95,6 +96,12 @@ class DeepSeekModel:
             '{"answer":"直接回答问题的简短说明","selections":[{"chunk_id":"已给出的ID","start_line":1,"end_line":2}]}。'
             "行号从1开始，起止均包含。只需一行时起止相同。如单行过长，可以改用 quote 字段提供逐字原文短摘录。"
             "引用只选择必要原文，保留关键条件，不得断章取义。证据不足时返回空数组。"
+            "先核对评定范围、适用对象和必要条件，再判断能否申请，不能仅凭排名或获奖就保证资格。"
+            "‘所有班主任’意味着每位班主任都受条款约束，不能先否定各自义务又重复相同义务。"
+            "区分团队第一成员须属于某学院与申请人本人必须排名第一，不得把成员学院归属改成个人排名限制。"
+            "名册未注明角色时，不推定名单老师就是专业成长班主任，应结合职责说明并提示核实角色。"
+            "题设数字只作为提问者描述的情况，不当作制度标准。不要复述无关的版本日期或段落编号。"
+            "校历称呼沿用第一学期、第二学期；日期答复无需机械重复学期名，别将开课日当报到日。"
             "若只能回答部分诉求，answer保留有依据的部分，selections保留对应原文；"
             "另用missing_questions数组列出尚无充分依据的自足问句，不把未回答的部分伪装成已回答。"
             "最后检查表达：除前述严肃事项外，answer应有自然口语开头、清楚的短段和1个表情或颜文字。"
@@ -359,12 +366,21 @@ def policy_answer_text(answer, sources):
 
     # A natural document reference need not be wrapped in book-title brackets.
     # Remove only a verified name AND version, never arbitrary years or scores.
-    return re.sub(r"[\u4e00-\u9fffA-Za-z·]+[（(]\s*\d{4}\s*版\s*[）)](?:\.(?:pdf|docx?))?",
+    text = re.sub(r"[\u4e00-\u9fffA-Za-z·]+[（(]\s*\d{4}\s*版\s*[）)](?:\.(?:pdf|docx?))?",
                   without_bare_title, text, flags=re.IGNORECASE)
+    for source in sources:
+        for year in re.findall(r"20\d{2}", source["title"]):
+            if "学生手册" in source["title"]:
+                text = re.sub(rf"{year}版(?:的)?学生手册", "学生手册", text)
+            if "修订" in source["title"]:
+                text = re.sub(rf"{year}年修订(?:的)?(?:评选)?办法", "评选办法", text)
+        for number in re.findall(r"第(\d+)段", source.get("location", "")):
+            text = text.replace(f"第{number}段", "该段")
+    return text
 
 
 def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessment=None, calculation=None,
-                      holiday_marks=(), catalog_grades=(), answer_budget=MAX_ANSWER_CHARS):
+                      holiday_marks=(), catalog_grades=(), answer_budget=MAX_ANSWER_CHARS, question=""):
     selections = selected.get("selections") if isinstance(selected, dict) else None
     if deepseek and selections == []:
         raise MissingEvidence()
@@ -408,7 +424,15 @@ def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessme
             raise InvalidEvidence("unsupported_summary_link")
         numeric_answer = policy_answer_text(answer, valid)
         answer_quantities = quantities(numeric_answer)
+        policy_text = "\n".join(source["excerpt"] for source in valid)
         allowed_quantities = quantities(content)
+        for source in valid:
+            for line in source["excerpt"].splitlines():
+                if re.search(r"20\d{2}年\d+月\d+日.*(?:印发|发布)", line):
+                    allowed_quantities |= quantities(line)
+        allowed_quantities |= scenario_quantities(numeric_answer, question, policy_text)
+        for source in valid:
+            allowed_quantities |= quantities(source.get("derived_facts", ""))
         # A complete numbered procedure supports "6 steps" even though 6 is a list label.
         positions = {}
         for source in valid:
@@ -459,8 +483,8 @@ def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessme
                 raise InvalidEvidence("missing_or_wrong_competition_grade")
         for term, alias in (("第一学期", "秋季学期"), ("第二学期", "春季学期")):
             if any(source["location"].endswith(f" · 校历结构化 · {term}教学周") for source in valid):
-                if term not in answer or alias in answer:
-                    raise InvalidEvidence("calendar_term_must_follow_source")
+                if alias in answer:
+                    raise InvalidEvidence("calendar_term_must_follow_source", feedback=f"请将{alias}改为原文称呼{term}。")
         roster_values = {source["roster_value"] for source in valid if source.get("roster_value")}
         if roster_values and not any(value in answer and value in content for value in roster_values):
             raise InvalidEvidence("wrong_roster_value")
@@ -478,27 +502,29 @@ def retrieval_query(part, context):
     return re.sub(year_prefix, "", part).strip(" ，,") or part
 
 
-def counselor_citation(db, chunk, source):
+def roster_citation(db, chunk, source, field):
+    if not chunk.location.startswith("工作表"):
+        return source
     _, sheet = sheet_key(chunk)
     rows = db.scalars(select(Chunk.text).where(
         Chunk.document_id == chunk.document_id, Chunk.location.startswith(sheet + " 第"),
-        Chunk.text.contains("班级"), Chunk.text.contains("辅导员"),
+        Chunk.text.contains("班级"), Chunk.text.contains(field),
     ))
     for row in rows:
         headers = [field.strip() for field in row.split("|")]
-        if "班级" in headers and "辅导员" in headers:
-            value = chunk.text.split("|")[headers.index("辅导员")].strip()
-            return {**source, "roster_field": "辅导员", "roster_value": value}
+        if "班级" in headers and field in headers:
+            value = chunk.text.split("|")[headers.index(field)].strip()
+            return {**source, "roster_field": field, "roster_value": value}
     return source
 
 
 def calendar_period(db, query, context):
-    if not re.search(r"哪[天日]|几[号日]|什么时候|啥时候|何时|起止|几月|多久", query):
+    if not re.search(r"哪[天日]|几[号日]|什么时候|啥时候|何时|起止|几月|多久|第\d+周|\d+月\d+", query):
         return None
     labels = set(re.findall(r"寒假|暑假|夏季学期", query))
-    if re.search(r"春季学期|第二学期", query) and re.search(r"上课|开学|教学周", query):
+    if re.search(r"春季|第二学期", query) and re.search(r"上课|开课|开学|教学周|第\d+周", query):
         labels.add("第二学期教学周")
-    if re.search(r"秋季学期|第一学期", query) and re.search(r"上课|开学|教学周", query):
+    if re.search(r"秋季|第一学期", query) and re.search(r"上课|开课|开学|教学周|第\d+周", query):
         labels.add("第一学期教学周")
     if len(labels) != 1 or re.search(r"调休|补课|报到|考试|返校|军训|截止|宿舍", query):
         return None
@@ -515,7 +541,23 @@ def calendar_period(db, query, context):
         rows = [(chunk, doc) for chunk, doc in rows
                 if (academic_year := re.search(r"(20\d{2})-(20\d{2})学年", chunk.text))
                 and year in academic_year.groups()]
-    return citation(*rows[0]) if len(rows) == 1 else None
+    if len(rows) != 1:
+        return None
+    result = citation(*rows[0])
+    result["derived_facts"] = "该区间起始日为第1天。此为区间定义，具体日期按原文。"
+    week = re.search(r"第(\d+)周", query)
+    period = re.search(r"覆盖(20\d{2})年(\d+)月(\d+)日至(20\d{2})年(\d+)月(\d+)日", result["excerpt"])
+    count = re.search(r"共(\d+)周", result["excerpt"])
+    if week and period and count and 1 <= int(week[1]) <= int(count[1]):
+        values = list(map(int, period.groups()))
+        start, finish = date(*values[:3]), date(*values[3:])
+        first = start + timedelta(weeks=int(week[1]) - 1)
+        last = min(first + timedelta(days=6), finish)
+        if start.weekday() == 0 and first <= finish:
+            result["derived_facts"] = (f"按原文教学周起始日逐周计算，第{week[1]}周覆盖"
+                                       f"{first.year}年{first.month}月{first.day}日至"
+                                       f"{last.year}年{last.month}月{last.day}日，共{(last - first).days + 1}天。此为程序推导。")
+    return result
 
 
 CALENDAR_OVERVIEW_LOCATION = "第1、2页 · 校历结构化 · 学年放假总览"
@@ -648,11 +690,16 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
     report_progress("searching")
     results = []
     model = ExtractiveMock() if settings().model_mode == "mock" else DeepSeekModel()
-    for part in planned_questions(db, text, model):
-        query = normalize_roster_query(retrieval_query(part, context))
+    full_query = policy_query(retrieval_query(text, context))
+    parts = [text] if clarification_for(full_query) else planned_questions(db, text, model)
+    for part in parts:
+        query = policy_query(normalize_roster_query(retrieval_query(part, context)))
         if TECHNICAL_LIMIT_QUESTION.search(query):
             results.append({"question": part, "status": "out_of_scope",
                             "content": "这类问题不能回答", "citations": []})
+            continue
+        if prompt := clarification_for(query):
+            results.append({"question": part, "status": "needs_clarification", "content": prompt, "citations": []})
             continue
         ranking = ranking_answer(db, query, context)
         if ranking:
@@ -691,10 +738,15 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
         elif calendar or assessment_citations:
             citations = [calendar] if calendar else assessment_citations
         else:
-            evidence, special = retriever.search(db, query, context)
+            evidence, special = search_policy_evidence(db, query, context)
             citations = [citation(c, d) for c, d in evidence]
-            if special == "roster_match" and "辅导员" in query and "班主任" not in query:
-                citations = [counselor_citation(db, chunk, source)
+            if special == "roster_match":
+                field = "班主任"
+                if "职称" in query:
+                    field = "班主任职称"
+                elif "辅导员" in query and "班主任" not in query:
+                    field = "辅导员"
+                citations = [roster_citation(db, chunk, source, field)
                              for (chunk, _), source in zip(evidence, citations, strict=True)]
         report_progress("checking")
         if special == "roster_match" and isinstance(model, ExtractiveMock):
@@ -718,7 +770,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
         content = ""
         scope_prefix, historical = scope_notice(citations, context)
         prefix = (catalog_note + "\n\n" if catalog_note else "") + scope_prefix
-        if special == "roster_match" and re.search(r"专业成长|思想成长", query):
+        if special == "roster_match" and re.search(r"专业成长|思想成长|考研|就业|学业", query):
             prefix += "班主任表只列出班主任，未注明具体角色。\n\n"
         answer_budget = MAX_ANSWER_CHARS - len(prefix)
         if re.search(r"大[一二三四]|今年入学|往年", part) and not context.get("admission_year") and not citations:
@@ -740,6 +792,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                     if calendar and not holiday_overview:
                         model_query += ("\n使用校历原有的第一学期、第二学期等称呼。"
                                         "区分备注写明的开课日和按周次表整理的覆盖范围。")
+                        if calendar.get("derived_facts"):
+                            model_query += "\n" + calendar["derived_facts"]
                     if holiday_overview:
                         model_query += ("\n按用户问的年份或学年回答，并说明资料覆盖范围。逐项列出证据中的节日名称及日期，"
                                         "并把校历明确的寒暑假区间单独说明。节日标记不能推断连休或调休。")
@@ -764,7 +818,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                         content, citations = verified_excerpts(
                             selected, citations, cohort_options=cohort_options, deepseek=deepseek,
                             assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
-                            catalog_grades=catalog_grades, answer_budget=answer_budget)
+                            catalog_grades=catalog_grades, answer_budget=answer_budget, question=query)
                         missing_questions = selected.get("missing_questions", [])
                     except InvalidEvidence as exc:
                         if not isinstance(model, DeepSeekModel):
@@ -780,7 +834,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                         content, citations = verified_excerpts(
                             selected, citations, cohort_options=cohort_options, deepseek=True,
                             assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
-                            catalog_grades=catalog_grades, answer_budget=answer_budget)
+                            catalog_grades=catalog_grades, answer_budget=answer_budget, question=query)
                         missing_questions = selected.get("missing_questions", [])
                 finally:
                     semaphore.release()
