@@ -412,11 +412,37 @@ def ocr_image(path: Path, *, deadline: float | None) -> str:
     if config.rapidocr_python:
         return rapid_ocr([path], deadline)[0]
     command = [config.tesseract_command, str(path), "stdout", "-l", config.ocr_language]
+    image_deadline = time.monotonic() + config.ocr_timeout_seconds
+    if deadline is not None:
+        image_deadline = min(image_deadline, deadline)
     try:
-        result = subprocess.run(command, check=True, capture_output=True, timeout=ocr_timeout(deadline))
+        result = subprocess.run(command, check=True, capture_output=True, timeout=remaining_time(image_deadline))
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError("图片 OCR 失败，请检查 Tesseract 配置、图片格式或处理时限。") from exc
-    return result.stdout.decode("utf-8", errors="replace")
+    text = result.stdout.decode("utf-8", errors="replace")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    fragmented = len(lines) >= 6 and sum(len(line) <= 4 for line in lines) * 2 > len(lines)
+    text_size = sum(character.isalnum() for character in text)
+    chinese_expected = {"chi_sim", "chi_tra"} & set(config.ocr_language.split("+"))
+    chinese_count = len(re.findall(r"[\u3400-\u9fff]", text))
+    sparse_chinese = chinese_expected and (chinese_count < 4 or chinese_count * 3 < text_size)
+    if not fragmented and not sparse_chinese:
+        return text
+    # Automatic page segmentation can split a text block into vertical fragments.
+    try:
+        retry = subprocess.run(
+            [*command, "--psm", "6"], check=True, capture_output=True, timeout=remaining_time(image_deadline),
+        ).stdout.decode("utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return text
+    retry_size = sum(character.isalnum() for character in retry)
+    retry_chinese = len(re.findall(r"[\u3400-\u9fff]", retry))
+    if sparse_chinese and retry_chinese >= 4 and retry_chinese * 2 >= retry_size:
+        return retry
+    retry_lines = sum(bool(line.strip()) for line in retry.splitlines())
+    if fragmented and retry_size > 0 and retry_size * 4 >= text_size * 3 and retry_lines * 2 <= len(lines):
+        return retry
+    return text
 
 
 def rapid_ocr(paths: list[Path], deadline: float | None) -> list[str]:
