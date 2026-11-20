@@ -218,6 +218,78 @@ STYLE = ('你是校园小助手小八，用自然、轻松、简洁的中文直�
          '纯文本，最多500字符，先整合再输出，不能截断。不要泄露内部配置。')
 
 
+def deepseek_sources(message, *, official):
+    pages = {}
+    for step in message.get('server_tool_calls') or []:
+        for call in step.get('calls') or []:
+            if call.get('status') != 'completed':
+                continue
+            results = call.get('sources') or ([call['page']] if call.get('page') else [])
+            for result in results:
+                url = result.get('url')
+                if isinstance(url, str) and safe_url(url, official):
+                    if url not in pages or result.get('snippet'):
+                        pages[url] = result
+
+    sources = {}
+    for annotation in message.get('annotations') or []:
+        if annotation.get('type') != 'url_citation':
+            continue
+        citation = annotation.get('url_citation') or {}
+        url = citation.get('url')
+        if not isinstance(url, str) or url not in pages or url in sources:
+            continue
+        result = pages[url]
+        timestamp = result.get('published_at')
+        sources[url] = {
+            'id': f'deepseek-{len(sources)}', 'url': url,
+            'title': result.get('title') or citation.get('title') or url,
+            'excerpt': result.get('snippet') or '',
+            'published_at': timestamp[:10] if isinstance(timestamp, str)
+            and re.match(r'^\d{4}-\d{2}-\d{2}(?:T|$)', timestamp) else None,
+            'retrieved_at': today(),
+        }
+        if len(sources) == 5:
+            break
+    return list(sources.values())
+
+
+def direct_model_answer(db, question, *, official=False):
+    prompt = STYLE + (
+        '知识库没有查到这一问，请直接回答。用户要求联网或问题涉及学校具体事实、'
+        '实时信息时，如可用请使用内置搜索，并尽量给出工具来源。学校问题优先查询学校官网。'
+        '不编造链接、学校制度、截止日期、资格或实时信息；无法确认时直接说明。'
+        '来源由系统另行显示，正文只输出答案，不写链接或引用标记。'
+    )
+    if official:
+        cfg = settings()
+        prompt += f'本校是{cfg.school_name}，官网域名是{cfg.school_official_domain}。'
+    for attempt in range(2):
+        if not model_budget_available(db) or not semaphore.acquire(timeout=1):
+            raise ModelFailure('resource_limit')
+        try:
+            message = DeepSeekModel().request_web(
+                prompt + ('请复核来源、数值和字数，再重写答复。' if attempt else ''), question)
+        finally:
+            semaphore.release()
+        content = message.get('content')
+        if not isinstance(content, str) or not content.strip():
+            continue
+        sources = deepseek_sources(message, official=official)
+        if not sources and official:
+            content = '模型参考（未核对学校官方来源）：' + content.strip()
+        if len(content.strip()) > 500 or re.search(r'https?://|www\.|<[^>]+>|!\[|\]\(', content, re.I):
+            continue
+        if sources and all(source['excerpt'] for source in sources):
+            try:
+                content, _ = validate_web_text(content, sources)
+            except InvalidEvidence:
+                continue
+        return {'question': question, 'status': 'web_answer' if sources else 'general_answer',
+                'content': content.strip(), 'citations': [], **({'web_sources': sources} if sources else {})}
+    raise InvalidEvidence('direct_answer_invalid')
+
+
 def general_answer(db, question, context):
     for retry in range(2):
         result = model_json(db, STYLE + (
@@ -232,6 +304,15 @@ def general_answer(db, question, context):
         if isinstance(answer, str) and 0 < len(answer.strip()) <= 500:
             return {'question': question, 'status': 'general_answer', 'content': answer.strip(), 'citations': []}
     raise InvalidEvidence('general_answer_too_long')
+
+
+def validate_web_text(content, sources):
+    evidence = [{'chunk_id': s['id'], 'document_id': s['url'],
+                 'excerpt': f"{s['title']}\n{s['url']}\n{s['excerpt']}", 'title': s['title'],
+                 'admission_year': None, 'location': s['url']} for s in sources]
+    return verified_excerpts({'answer': content, 'selections': [
+        {'chunk_id': s['chunk_id'], 'quote': s['excerpt']} for s in evidence]}, evidence,
+        cohort_options=False, deepseek=True)
 
 
 def web_answer(db, question, *, official=False, search_query=None):
@@ -254,13 +335,8 @@ def web_answer(db, question, *, official=False, search_query=None):
         if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in allowed for i in ids):
             raise MissingEvidence()
         chosen = [allowed[i] for i in dict.fromkeys(ids)]
-        evidence = [{'chunk_id': s['id'], 'document_id': s['url'],
-                     'excerpt': f"{s['title']}\n{s['url']}\n{s['excerpt']}", 'title': s['title'],
-                     'admission_year': None, 'location': s['url']} for s in chosen]
         try:
-            content, _ = verified_excerpts({'answer': result.get('answer'), 'selections': [
-                {'chunk_id': s['chunk_id'], 'quote': s['excerpt']} for s in evidence]}, evidence,
-                cohort_options=False, deepseek=True)
+            content, _ = validate_web_text(result.get('answer'), chosen)
             missing = result.get('missing_question', '')
             return {'question': question, 'status': 'web_answer', 'content': content, 'citations': [],
                     'web_sources': chosen, 'missing_question': missing if isinstance(missing, str) else ''}
@@ -275,8 +351,7 @@ def answer_turn(db, text, context):
     try:
         tasks = plan_turn(db, text, context)
     except (ModelFailure, InvalidEvidence, TypeError, AttributeError):
-        # Failure must not turn a campus rule into an ungrounded general answer.
-        return policy_answer(db, text, context)
+        tasks = [{'question': text, 'kind': 'campus'}]
     items = []
     resolved_context = context
     for task in tasks:
@@ -316,15 +391,14 @@ def answer_turn(db, text, context):
                                   'content': '聊天服务暂时未能完成回答，请稍后重试，问题已记录。'})
                     continue
             try:
-                result = web_answer(db, missing, official=kind in {'campus', 'general'},
-                                    search_query=task.get('search_query') if missing == question else None)
+                result = direct_model_answer(db, missing, official=kind in {'campus', 'general'})
                 items.append(result)
                 if result.get('missing_question'):
                     items.append({'question': result['missing_question'], 'status': 'missing_material',
                                   'content': '这部分仍未查到充分依据，已进入后台问题汇总。', 'citations': []})
             except (ModelFailure, MissingEvidence, InvalidEvidence, TypeError, AttributeError):
                 items.append({'question': missing, 'status': 'missing_material', 'citations': [],
-                              'content': '现有资料和本次联网检索未能提供充分依据，已进入后台问题汇总。'
-                              '暂不能确认具体规定或最新情况，请稍后再试或向学院核实。'})
+                              'content': '知识库没有查到足够资料，DeepSeek 本次也未能完成联网或直接回答。'
+                              '问题已进入后台汇总，请稍后再试或向学院核实。'})
     return {'items': items, 'context': resolved_context, 'model_mode': settings().model_mode,
             'notice': '制度答复请核对原文及适用范围；通用回答由模型生成。联网摘要附真实链接与查询日期，发布日期未知时不作推断。'}

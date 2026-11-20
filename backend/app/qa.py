@@ -131,23 +131,49 @@ class DeepSeekModel:
                                          "clauses": [{"index": i, "text": scrub(value)}
                                                      for i, value in enumerate(clauses)]})
 
-    def request_json(self, system: str, payload: dict) -> dict:
+    def _request_chat(self, system: str, text: str, **options) -> dict:
         cfg = settings()
         try:
             with httpx.Client(timeout=cfg.model_timeout_seconds) as client:
                 result = client.post(cfg.deepseek_base_url.rstrip("/") + "/chat/completions",
                                      headers={"Authorization": "Bearer " + cfg.deepseek_api_key},
                                      json={"model": cfg.deepseek_model, "temperature": 0,
-                                           "max_tokens": 2000, "thinking": {"type": "disabled"},
-                                           "response_format": {"type": "json_object"},
+                                           "max_tokens": 2000, "thinking": {"type": "disabled"}, **options,
                                            "messages": [{"role": "system", "content": system},
-                                                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]})
+                                                        {"role": "user", "content": text}]})
                 result.raise_for_status()
-                return json.loads(result.json()["choices"][0]["message"]["content"])
-        except (httpx.HTTPError, KeyError, IndexError) as exc:
+                choice = result.json()["choices"][0]
+                if not isinstance(choice, dict):
+                    raise ValueError("invalid completion choice")
+                return choice
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ModelFailure("model_unavailable") from exc
+
+    def request_json(self, system: str, payload: dict) -> dict:
+        choice = self._request_chat(system, json.dumps(payload, ensure_ascii=False),
+                                    response_format={"type": "json_object"})
+        try:
+            return json.loads(choice["message"]["content"])
+        except (KeyError, IndexError) as exc:
             raise ModelFailure("model_unavailable") from exc
         except (ValueError, TypeError) as exc:
             raise InvalidEvidence("model_invalid_json") from exc
+
+    def request_web(self, system: str, question: str) -> dict:
+        options = {}
+        if settings().deepseek_model == "deepseek-flash":
+            options["tools"] = [{"type": "deepseek_web_search"}, {"type": "deepseek_read_url"}]
+        text = scrub(question)
+        try:
+            choice = self._request_chat(system, text, **options)
+        except ModelFailure as exc:
+            cause = exc.__cause__
+            if not options or not isinstance(cause, httpx.HTTPStatusError) or cause.response.status_code != 400:
+                raise
+            choice = self._request_chat(system, text)
+        if choice.get("finish_reason") != "stop" or not isinstance(choice.get("message"), dict):
+            raise ModelFailure("model_incomplete")
+        return choice["message"]
 
 
 semaphore = threading.BoundedSemaphore(settings().model_concurrency)

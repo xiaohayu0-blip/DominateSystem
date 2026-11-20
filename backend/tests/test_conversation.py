@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -27,6 +28,71 @@ def test_general_chat_does_not_require_documents(monkeypatch):
     assert answer['items'][0]['citations'] == []
 
 
+def test_campus_knowledge_miss_lets_deepseek_search_directly(monkeypatch):
+    question = '联网搜索一下武汉纺织大学的成立时间'
+    url = 'https://www.wtu.edu.cn/xxgk/xxjj.htm'
+    plan(monkeypatch, [{'question': question, 'kind': 'campus'}])
+    monkeypatch.setattr(chat, 'policy_answer', lambda *a: {'items': [
+        {'question': question, 'status': 'missing_material', 'content': '缺失', 'citations': []}]})
+    seen = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append(body)
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {
+            'content': '武汉纺织大学的前身始建于1958年，2010年更名为武汉纺织大学。',
+            'annotations': [{'type': 'url_citation', 'url_citation': {'url': url}}],
+            'server_tool_calls': [{'calls': [{'status': 'completed', 'sources': [
+                {'type': 'url', 'url': url, 'title': '学校简介',
+                 'snippet': '学校前身始建于1958年，2010年更名为武汉纺织大学。'}]}]}],
+        }}]})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(chat.httpx, 'Client', lambda **kw: real_client(
+        transport=httpx.MockTransport(handler), **kw))
+    with SessionLocal() as db:
+        item = chat.answer_turn(db, question, {})['items'][0]
+    assert item['status'] == 'web_answer'
+    assert '1958年' in item['content']
+    assert item['web_sources'][0]['url'] == url
+    assert seen[0]['messages'][-1]['content'] == question
+    assert {'type': 'deepseek_web_search'} in seen[0]['tools']
+    assert 'response_format' not in seen[0]
+
+
+def test_campus_knowledge_miss_can_return_direct_model_text_without_citations(monkeypatch):
+    question = '学校什么时候成立'
+    plan(monkeypatch, [{'question': question, 'kind': 'campus'}])
+    monkeypatch.setattr(chat, 'policy_answer', lambda *a: {'items': [
+        {'question': question, 'status': 'missing_material', 'content': '缺失', 'citations': []}]})
+    monkeypatch.setattr(DeepSeekModel, 'request_web',
+                        lambda *a: {'content': '武汉纺织大学的前身始建于1958年。'}, raising=False)
+    with SessionLocal() as db:
+        item = chat.answer_turn(db, question, {})['items'][0]
+    assert item['status'] == 'general_answer'
+    assert '1958年' in item['content']
+    assert not item['citations'] and not item.get('web_sources')
+
+
+def test_deepseek_can_answer_without_tools_if_the_endpoint_rejects_them(monkeypatch):
+    requests = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if 'tools' in body:
+            return httpx.Response(400)
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop',
+                                                     'message': {'content': '通用参考答复。'}}]})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(settings(), 'deepseek_model', 'deepseek-flash')
+    monkeypatch.setattr(chat.httpx, 'Client', lambda **kw: real_client(
+        transport=httpx.MockTransport(handler), **kw))
+    assert DeepSeekModel().request_web('请直接回答', '这是什么') == {'content': '通用参考答复。'}
+    assert len(requests) == 2 and 'tools' not in requests[1]
+
+
 def test_partial_knowledge_is_kept_when_search_fails(monkeypatch):
     plan(monkeypatch, [{'question': '申请条件', 'kind': 'campus'},
                        {'question': '今年报名截止日期', 'kind': 'campus'}])
@@ -35,7 +101,7 @@ def test_partial_knowledge_is_kept_when_search_fails(monkeypatch):
                 'content': '条件原文' if text == '申请条件' else '缺失', 'citations': []}
         return {'items': [item]}
     monkeypatch.setattr(chat, 'policy_answer', policy)
-    monkeypatch.setattr(chat, 'search_web', lambda *a, **kw: (_ for _ in ()).throw(ModelFailure('search_failed')))
+    monkeypatch.setattr(DeepSeekModel, 'request_web', lambda *a: (_ for _ in ()).throw(ModelFailure('search_failed')))
     with SessionLocal() as db:
         answer = chat.answer_turn(db, '申请条件和今年截止日期', {})
     assert answer['items'][0]['content'] == '条件原文'
@@ -45,14 +111,15 @@ def test_partial_knowledge_is_kept_when_search_fails(monkeypatch):
 
 def test_web_answer_requires_verified_search_sources(monkeypatch):
     plan(monkeypatch, [{'question': '最新通知', 'kind': 'web'}])
-    sources = [{'id': 'web-0', 'title': '通知', 'url': 'https://www.wtu.edu.cn/a.htm',
-                'excerpt': '通知于2026年11月发布。', 'published_at': None, 'retrieved_at': '2026-11-17'}]
-    monkeypatch.setattr(chat, 'search_web', lambda *a, **kw: sources)
-    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {
-        'answer': '通知于2026年11月发布。', 'source_ids': ['made-up']})
+    monkeypatch.setattr(DeepSeekModel, 'request_web', lambda *a: {
+        'content': '我暂时无法确认最新通知。',
+        'annotations': [{'type': 'url_citation', 'url_citation': {'url': 'https://example.org/made-up'}}],
+        'server_tool_calls': [{'calls': [{'status': 'completed', 'sources': [
+            {'url': 'https://www.wtu.edu.cn/a.htm', 'title': '通知', 'snippet': '通知于2026年11月发布。'}]}]}],
+    })
     with SessionLocal() as db:
         answer = chat.answer_turn(db, '最新通知', {})
-    assert answer['items'][0]['status'] == 'missing_material'
+    assert answer['items'][0]['status'] == 'general_answer'
     assert not answer['items'][0].get('web_sources')
 
 
@@ -113,17 +180,19 @@ def test_official_search_falls_back_to_school_pages(monkeypatch):
 
 def test_web_answer_keeps_real_links_and_rejects_wrong_numbers(monkeypatch):
     plan(monkeypatch, [{'question': '最新发布', 'kind': 'web'}])
-    source = {'id': 'web-0', 'title': '官方发布', 'url': 'https://example.org/news',
-              'excerpt': '开放3个申请名额，仅限大二学生。', 'published_at': None, 'retrieved_at': '2026-11-17'}
-    monkeypatch.setattr(chat, 'search_web', lambda *a, **kw: [source])
-    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {
-        'answer': '开放3个申请名额，仅限大二学生。', 'source_ids': ['web-0']})
+    url = 'https://example.org/news'
+    message = {
+        'content': '开放3个申请名额，仅限大二学生。',
+        'annotations': [{'type': 'url_citation', 'url_citation': {'url': url}}],
+        'server_tool_calls': [{'calls': [{'status': 'completed', 'sources': [
+            {'url': url, 'title': '官方发布', 'snippet': '开放3个申请名额，仅限大二学生。'}]}]}],
+    }
+    monkeypatch.setattr(DeepSeekModel, 'request_web', lambda *a: message)
     with SessionLocal() as db:
         answer = chat.answer_turn(db, '最新发布', {})
         assert answer['items'][0]['status'] == 'web_answer'
-        assert answer['items'][0]['web_sources'] == [source]
-        monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {
-            'answer': '开放30个申请名额，仅限大二学生。', 'source_ids': ['web-0']})
+        assert answer['items'][0]['web_sources'][0]['url'] == url
+        message['content'] = '开放30个申请名额，仅限大二学生。'
         failed = chat.answer_turn(db, '最新发布', {})
         assert failed['items'][0]['status'] == 'missing_material'
 
@@ -149,6 +218,7 @@ def test_history_is_bounded_and_scrubbed():
 
 
 def test_partial_single_policy_answer_keeps_citations_and_records_only_gap(monkeypatch):
+    monkeypatch.setattr(DeepSeekModel, 'request_web', lambda *a: {'content': '今年的截止时间暂时无法确认。'})
     plan(monkeypatch, [{'question': '申请条件和截止时间', 'kind': 'campus'}])
     cited = {'document_id': 'real-id', 'excerpt': '需要申请表。'}
     monkeypatch.setattr(chat, 'policy_answer', lambda *a: {'items': [{
