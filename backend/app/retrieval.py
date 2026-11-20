@@ -109,10 +109,13 @@ def vector(text: str, dimensions=128) -> list[float]:
     return [round(x / norm, 6) for x in values]
 
 
-def build_chunks(db: Session, document: Document, parts: list[tuple[str, str]]):
+def build_chunks(db: Session, document: Document, parts: list[tuple[str, str]], *, structured=False):
     from sqlalchemy import delete
     chunks = []
     for location, raw in parts:
+        if structured:
+            chunks.append(Chunk(document_id=document.id, location=location, text=raw, vector=vector(raw)))
+            continue
         # Keep source location; overlap prevents arbitrary chunk cuts hiding nearby conditions.
         for i in range(0, len(raw), 650):
             text = raw[i:i + 800].strip()

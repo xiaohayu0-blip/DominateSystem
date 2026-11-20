@@ -254,6 +254,8 @@ def split_questions(text: str):
             continue
         if (parts and boundary not in {"另外", "以及", "同时还想问"} and (
                 is_dependent_question(part)
+                or (re.search(r"寒假|暑假|夏季学期", parts[-1]) and
+                    re.fullmatch(r"(?:一共|总共)?(?:放|休)?(?:多久|多长时间|几天|多少天)[呢啊呀吗]?", part))
                 or (re.search(r"放假|哪些假|节假日|寒暑假", parts[-1])
                     and re.match(r"^(?:分别|各自)(?:是)?(?:从|几月|哪天|什么时候|放)", part)))):
             parts[-1] += "，" + part
@@ -519,7 +521,7 @@ def roster_citation(db, chunk, source, field):
 
 
 def calendar_period(db, query, context):
-    if not re.search(r"哪[天日]|几[号日]|什么时候|啥时候|何时|起止|几月|多久|第\d+周|\d+月\d+", query):
+    if not re.search(r"哪[天日]|几[号日]|什么时候|啥时候|何时|起止|几月|多久|多长时间|几天|多少天|第\d+周|\d+月\d+", query):
         return None
     labels = set(re.findall(r"寒假|暑假|夏季学期", query))
     if re.search(r"春季|第二学期", query) and re.search(r"上课|开课|开学|教学周|第\d+周", query):
@@ -545,6 +547,18 @@ def calendar_period(db, query, context):
         return None
     result = citation(*rows[0])
     result["derived_facts"] = "该区间起始日为第1天。此为区间定义，具体日期按原文。"
+    if label in {"寒假", "暑假", "夏季学期"} and re.search(r"多久|多长时间|几天|多少天", query):
+        dates = re.search(r"(20\d{2})年(\d+)月(\d+)日至(20\d{2})年(\d+)月(\d+)日", result["excerpt"])
+        if dates:
+            values = list(map(int, dates.groups()))
+            try:
+                start, end = date(*values[:3]), date(*values[3:])
+            except ValueError:
+                pass
+            else:
+                if end >= start:
+                    result["duration_notice"] = f"按校历区间首尾两天都计入，共{(end - start).days + 1}天。"
+                    result["derived_facts"] = result["duration_notice"]
     week = re.search(r"第(\d+)周", query)
     period = re.search(r"覆盖(20\d{2})年(\d+)月(\d+)日至(20\d{2})年(\d+)月(\d+)日", result["excerpt"])
     count = re.search(r"共(\d+)周", result["excerpt"])
@@ -727,8 +741,11 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                             "clarification_kind": kind})
             continue
         if calendar and isinstance(model, ExtractiveMock):
+            content = calendar["excerpt"]
+            if calendar.get("duration_notice"):
+                content += "\n" + calendar["duration_notice"]
             results.append({"question": part, "status": "answered",
-                            "content": calendar["excerpt"], "citations": [calendar]})
+                            "content": content, "citations": [calendar]})
             continue
         special = ""
         if catalog_citations:

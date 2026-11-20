@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from . import models as m
 from .alerts import HELP_TEXT, create_alert, detect_danger, retention_preview
+from .calendar_index import CALENDAR_NOTE, verified_calendar_parts
 from .config import settings
 from .db import SessionLocal, get_db, now
 from .qa import context_for
@@ -458,9 +459,12 @@ def document_data(db, document):
 
 def parse_document(db, document, *, ocr_deadline=None):
     try:
-        parts, note = parse_file(store.path(document.storage_key), ocr_deadline=ocr_deadline)
+        calendar = verified_calendar_parts(document.content_hash)
+        parts, note = (calendar, CALENDAR_NOTE) if calendar else parse_file(
+            store.path(document.storage_key), ocr_deadline=ocr_deadline,
+        )
         with db.begin_nested():
-            build_chunks(db, document, parts)
+            build_chunks(db, document, parts, structured=bool(calendar))
             if document.business_year is None:
                 document.business_year = infer_business_year(document.original_name, parts[0][1])
             document.parse_status, document.parse_note = "ready", note

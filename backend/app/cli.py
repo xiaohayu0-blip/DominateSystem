@@ -102,7 +102,7 @@ def build_bge_index():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["create-admin", "demo-init", "mail-once", "retention-preview",
-                                            "bge-index", "group-duplicate-issues"])
+                                            "bge-index", "reindex-verified-calendars", "group-duplicate-issues"])
     parser.add_argument("--username", default="admin")
     args = parser.parse_args()
     if args.command == "create-admin":
@@ -113,6 +113,14 @@ def main():
         print("processed" if run_one() else "idle")
     elif args.command == "bge-index":
         build_bge_index()
+    elif args.command == "reindex-verified-calendars":
+        from .calendar_index import reindex_verified_calendars
+
+        with SessionLocal.begin() as db:
+            count = reindex_verified_calendars(db)
+            if count == 0:
+                raise SystemExit("未找到已核对的校历文件")
+        print(f"已重建 {count} 份校历的结构化索引")
     elif args.command == "group-duplicate-issues":
         from .services import group_existing_issues
 

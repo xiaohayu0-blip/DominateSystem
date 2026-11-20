@@ -54,6 +54,56 @@ def ask(client, text, **kwargs):
     return client.get("/api/questions/" + response.json()["id"]).json()
 
 
+def test_winter_break_start_and_duration_are_one_question():
+    from app.qa import split_questions
+
+    assert split_questions("什么时候放寒假?放多久?") == ["什么时候放寒假，放多久"]
+    assert split_questions("什么时候放寒假?另外暑假呢?") == ["什么时候放寒假", "暑假呢"]
+
+
+def test_winter_break_duration_is_derived_from_the_calendar(client):
+    signup(client, student())
+    with SessionLocal() as db:
+        doc = Document(title="武汉纺织大学2026-2027校历.pdf", status="published")
+        db.add(doc)
+        db.flush()
+        db.add(Chunk(document_id=doc.id, location="第1页 · 校历结构化 · 寒假",
+                     text="武汉纺织大学2026-2027学年校历，寒假：2027年1月18日至2027年2月21日。"))
+        db.commit()
+
+    items = ask(client, "什么时候放寒假?放多久?")["answer"]["items"]
+    assert len(items) == 1
+    assert items[0]["status"] == "answered"
+    assert "2027年1月18日至2027年2月21日" in items[0]["content"]
+    assert "35天" in items[0]["content"]
+    assert items[0]["citations"][0]["location"] == "第1页 · 校历结构化 · 寒假"
+
+
+def test_verified_calendar_repairs_uploaded_ocr_without_changing_document(monkeypatch):
+    from app import calendar_index
+    from app.main import parse_document
+
+    content_hash = "d55a841ed865d6e2e515eeea3a1d31238e682058d3b4885d9fa59548c02fc3ed"
+    key = store.save(b"fixture", ".pdf")
+    monkeypatch.setattr(calendar_index, "digest", lambda data: content_hash)
+    with SessionLocal() as db:
+        doc = Document(title="武汉纺织大学2026-2027校历[1].pdf", status="published",
+                       storage_key=key, content_hash=content_hash)
+        db.add(doc)
+        db.flush()
+        build_chunks(db, doc, [("第1页", "寒假 a= at +=" * 50)])
+        assert calendar_index.reindex_verified_calendars(db) == 1
+        assert doc.status == "published" and doc.storage_key == key
+        chunks = db.scalars(select(Chunk).where(Chunk.document_id == doc.id)).all()
+        assert len(chunks) == 60
+        assert all("校历结构化" in chunk.location and "a=" not in chunk.text for chunk in chunks)
+
+        monkeypatch.setattr("app.main.parse_file", lambda *a, **k: pytest.fail("verified PDF should skip OCR"))
+        parse_document(db, doc)
+        assert doc.parse_status == "ready"
+        assert len(db.scalars(select(Chunk).where(Chunk.document_id == doc.id)).all()) == 60
+
+
 def test_year_grade_validity_and_citations(client):
     signup(client, student())
     older = publish(year=2025, content="奖学金材料包含往年说明和申请表。")
