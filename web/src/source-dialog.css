@@ -1,0 +1,54 @@
+.source-dialog {
+  width: min(700px, calc(100% - 24px));
+  max-width: none;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+  color: inherit;
+}
+
+.source-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.source-dialog::backdrop {
+  background: #30273c80;
+}
+
+body:has(.source-dialog[open]) {
+  overflow: hidden;
+}
+
+.source-dialog-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.source-dialog-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.source-dialog-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 20px;
+  overflow-wrap: anywhere;
+}
+
+.source-dialog-scroll blockquote {
+  margin-bottom: 0;
+}

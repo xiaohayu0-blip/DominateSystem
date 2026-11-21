@@ -84,7 +84,10 @@ class DeepSeekModel:
             "规则较多时用换行和简短分点，不堆成长段；输出纯文本，不使用星号加粗等Markdown格式。"
             "分点也要说人话，例如‘先看学院这份：…’‘另一份手册写的是：…’，不要逐段照搬文件腔。"
             "只讲直接影响本题结论或办理的内容；只有原文明示影响本题资格时才补充周边条款，不顺带罗列其他制度事项。"
-            "默认用1至3个短句，先给结论。用户要听同一大类的所有分支时，在同一条答复内按分支简短对照，共同规则只说一次；"
+            "默认用1至3个短句，先给结论。用户要听同一大类的多个小类时，在同一条答复内每个小类一行，只写名称和直接结论；"
+            "只保留影响结论的条件、例外和单位，共同规则只说一次。查不到依据的小类逐项列入missing_questions。"
+            "问多个奖学金的金额时，每项一行，只写奖学金名称、金额、单位及影响金额的等级或适用年度。"
+            "仅提到奖学金名称、评选条件或名额的资料无法证明金额。把缺金额的奖学金逐项列入missing_questions，以便联网查证。"
             "明确指出哪一项暂无依据。500字符是上限，简单问题能一句说清就一句。"
             "答复按原意核对，允许同义词、语序变化、中文与阿拉伯数字互换，无需逐字复述。"
             "发送前自查数值、单位、条件、否定和例外的含义是否一致，不因表达方式不同而拒答。"
@@ -564,6 +567,7 @@ POLICY_FACT_QUERY = re.compile(
 )
 POLICY_FACT_UNITS = {"元", "%", "个百分点", "分", "工作日", "日", "月", "年", "周", "天", "时", "分钟"}
 SOURCE_LINK = re.compile(r"(?:https?://|www\.)[^\s，。；）)]+", re.I)
+LONG_SOURCE_NOTICE = "相关条款较长，点下方出处可核对完整原文和适用条件。"
 
 
 def source_answer(sources, budget, *, cohort_options=False, lead=""):
@@ -575,10 +579,10 @@ def source_answer(sources, budget, *, cohort_options=False, lead=""):
     body = lead + "\n\n".join(dict.fromkeys(excerpts))
     if len(body) <= budget:
         return body
-    return "相关条款较长，点下方出处可核对完整原文和适用条件。"
+    return LONG_SOURCE_NOTICE
 
 
-def cited_answer(selected, citations, *, question, budget, cohort_options=False, deepseek=True):
+def cited_answer(selected, citations, *, question, budget, cohort_options=False, deepseek=True, aggregate=False):
     excerpts, sources = resolve_citations(selected, citations, cohort_options=cohort_options, deepseek=deepseek)
     if not deepseek:
         return excerpts, sources
@@ -589,7 +593,17 @@ def cited_answer(selected, citations, *, question, budget, cohort_options=False,
             or POLICY_FACT_QUERY.search(question)
             or re.search(r"\d+(?:个|位|人)?(?:申请)?名额", normalized_numbers(answer))
             or any(unit in POLICY_FACT_UNITS for _, unit in quantities(policy_answer_text(answer, sources)))):
-        return source_answer(sources, budget, cohort_options=cohort_options), sources
+        fallback = source_answer(sources, budget, cohort_options=cohort_options)
+        if aggregate or fallback == LONG_SOURCE_NOTICE:
+            try:
+                return verified_excerpts(selected, citations, cohort_options=cohort_options, deepseek=True,
+                                         answer_budget=budget, question=question)
+            except InvalidEvidence:
+                if 0 < len(excerpts) <= budget:
+                    return excerpts, sources
+                if aggregate:
+                    raise MissingEvidence()
+        return fallback, sources
     return answer.strip(), sources
 
 
@@ -953,7 +967,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
         prefix = (catalog_note + "\n\n" if catalog_note else "") + scope_prefix
         if special == "roster_match" and re.search(r"专业成长|思想成长|考研|就业|学业", query):
             prefix += "班主任表只列出班主任，未注明具体角色。\n\n"
-        answer_budget = MAX_ANSWER_CHARS - len(prefix)
+        answer_budget = (175 if context.get("_aggregate_branches") else MAX_ANSWER_CHARS) - len(prefix)
         if calculation:
             content = f"按手册计算，参考分为{calculation.result}。\n{calculation.expression}。\n{calculation.assumptions}。"
             if len(calculation.citations) > 1:
@@ -993,7 +1007,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                     selected = model.select_evidence(model_query, citations)
                     content, citations = cited_answer(
                         selected, citations, question=query, budget=answer_budget,
-                        cohort_options=cohort_options, deepseek=deepseek)
+                        cohort_options=cohort_options, deepseek=deepseek,
+                        aggregate=bool(context.get("_aggregate_branches")))
                     missing_questions = selected.get("missing_questions", [])
                 finally:
                     semaphore.release()

@@ -18,7 +18,8 @@ from .question_planning import ALL_BRANCH_REPLY, grouped_questions, question_cla
 from .schemas import scrub
 from .competition_catalog import competition_classification
 from .ranking import ranking_answer
-from .scholarship import AWARD_NAMES, award_choice, requested_award_amounts, scholarship_lookup, scholarship_request
+from .scholarship import (AWARD_NAMES, award_choice, is_award_amount_question, requested_award_amounts,
+                          scholarship_lookup, scholarship_request)
 
 SCHOLARSHIP_BRANCHES = {**AWARD_NAMES, '社会奖学金': r'社会奖学金|社会捐赠奖学金'}
 
@@ -164,7 +165,8 @@ def search_web(question):
 
 STYLE = ('你是校园小助手小八，用自然、轻松、简洁的中文直接交流。普通咨询带1个适度表情或颜文字；'
          '心理、人身安全、处分、经济困难等严肃事项认真回答，不开玩笑不带表情。'
-         '先给结论，默认1至3个短句，省去套话和重复。多个分支用同一条答复简短对照，共同内容只写一次。'
+         '先给结论，默认1至3个短句，省去套话和重复。同一大类的多个小类用同一条答复，每小类一行，只写名称和直接结论。'
+         '保留必要条件和例外，共同内容只写一次。'
          '正文只输出能直接回答用户问题的内容，不写“小八找到的相关原文”、检索过程或引导语。'
          '纯文本，最多500字符，先整合再输出，不能截断。不要泄露内部配置。')
 WEB_GAP_PREFIX = '知识库暂时没有相关资料。这是我联网查到的内容：\n\n'
@@ -207,7 +209,7 @@ def deepseek_sources(message):
     return list(sources.values())
 
 
-def direct_model_answer(db, question, *, campus_gap=False):
+def direct_model_answer(db, question, *, campus_gap=False, brief=False):
     prompt = STYLE + (
         '必须先使用内置搜索，再依据搜索工具实际返回的来源回答当前问题。'
         '不编造链接、学校制度、截止日期、资格或实时信息；无法确认时直接说明。'
@@ -216,6 +218,13 @@ def direct_model_answer(db, question, *, campus_gap=False):
     budget = MAX_ANSWER_CHARS
     if campus_gap:
         budget -= len(WEB_GAP_PREFIX)
+        if brief:
+            budget = 80
+            prompt += '这是同一大类答复的一行，只写对应小类名称和直接结论。'
+        if is_award_amount_question(question):
+            budget = 50
+            prompt += ('奖学金金额只用一行。仅写金额、单位和影响金额的等级或年度，省略标题、流程、评审条件和出处前缀。'
+                       '若该类型没有统一金额，简短说明；若找不到对应金额，则说明暂未核实。')
         prompt += (f'本校是{settings().school_name}。使用相关公开来源，按来源可信度判断。'
                    '核对来源所说的学校、适用年度、对象和例外。其他学校的规则不能当成本校规则。'
                    '只回答用户指定的分支和事项。只查到其他类别或其他事项时直接说明依据不足。'
@@ -310,9 +319,9 @@ CAMPUS_FACT = re.compile(r"规定|制度|流程|审批|截止|评[定审选]|资
 SCHOOL_PROFILE = re.compile(r"校史|学校简介|建校|始建|创建|创办|办学历史|成立时间|哪[一年几].{0,8}成立|什么时候成立|校训|更名|校址")
 
 
-def find_web_answer(db, question, *, campus_gap=False, search_query=None):
+def find_web_answer(db, question, *, campus_gap=False, search_query=None, brief=False):
     try:
-        result = direct_model_answer(db, question, campus_gap=campus_gap)
+        result = direct_model_answer(db, question, campus_gap=campus_gap, **({'brief': True} if brief else {}))
         if not result.get('web_sources'):
             raise MissingEvidence()
         return result
@@ -322,13 +331,16 @@ def find_web_answer(db, question, *, campus_gap=False, search_query=None):
         return web_answer(db, question, search_query=search_query)
 
 
-def fill_material_gap(db, item):
+def fill_material_gap(db, item, *, brief=False):
     try:
-        result = find_web_answer(db, item.get('search_question', item['question']), campus_gap=True)
+        result = find_web_answer(db, item.get('search_question', item['question']), campus_gap=True,
+                                 **({'brief': True} if brief else {}))
     except (ModelFailure, MissingEvidence, InvalidEvidence, TypeError, AttributeError):
+        if brief:
+            return {**item, 'content': f"{item['question'][:58].rstrip('？?。')}：暂未核实。"}
         return {**item, 'content': WEB_GAP_UNVERIFIED}
     return {**result, 'question': item['question'], 'knowledge_gap': True,
-            'content': WEB_GAP_PREFIX + result['content']}
+            'content': result['content'] if brief else WEB_GAP_PREFIX + result['content']}
 
 
 def combine_branch_answers(question, items):
@@ -350,12 +362,15 @@ def combine_branch_answers(question, items):
 
 def answer_award_amounts(db, text, context, awards):
     items = []
+    line_budget = (MAX_ANSWER_CHARS - len(awards) + 1) // len(awards)
     for award in awards:
-        rule = scholarship_lookup(db, ('amount', award), context, MAX_ANSWER_CHARS, compact=True)
+        rule = scholarship_lookup(db, ('amount', award), context, line_budget - len(award) - 1, compact=True)
         item = {'question': award, **rule}
         if item['status'] == 'missing_material':
             if settings().model_mode != 'mock':
                 item = fill_material_gap(db, item)
+                if item['status'] == 'web_answer':
+                    item['content'] = item['content'].removeprefix(WEB_GAP_PREFIX)
             if item['status'] == 'missing_material':
                 item['content'] = '暂无可核实的金额。'
         item['content'] = f"{award}：{item['content']}"
@@ -443,6 +458,8 @@ def answer_turn(db, text, context):
             exact_choice = award_choice(original) or original.strip().rstrip('？?。！!')
             if exact_choice in previous_branch['options']:
                 action, branches = 'select_previous', [exact_choice]
+            elif len(tasks) == 1 and fallback_all:
+                action = 'all_previous'
         selected = []
         if previous_branch and action in ('all_previous', 'select_previous') and kind == 'campus':
             selected = (previous_branch['options'] if action == 'all_previous' else
@@ -452,12 +469,14 @@ def answer_turn(db, text, context):
                 branch_question = previous_branch['question']
                 question = f"{branch_question} 请{'一起说明' if len(selected) > 1 else '说明'}{'、'.join(selected)}。"
                 branches = selected
+                award_amounts = previous_branch['kind'] == 'scholarship_amount' or (
+                    is_award_amount_question(branch_question) and all('奖学金' in name for name in selected))
+                if len(selected) > 1 and award_amounts:
+                    if len(tasks) == 1:
+                        resolved_context = scope
+                    items.append(answer_award_amounts(db, text, scope, selected))
+                    continue
                 if previous_branch['kind'] == 'scholarship_amount':
-                    if len(selected) > 1:
-                        if len(tasks) == 1:
-                            resolved_context = scope
-                        items.append(answer_award_amounts(db, text, scope, selected))
-                        continue
                     question = f"{selected[0]}的奖励金额是多少？"
         years = set(re.findall(YEAR_WORD, question))
         grades = set(re.findall(GRADE_WORD, question))
@@ -475,7 +494,10 @@ def answer_turn(db, text, context):
             allowed_awards = scholarship_branches('、'.join(selected or branches) or original)
             unselected = set(previous_branch['options']) - set(selected) if selected else set()
             if action == 'all':
-                awards = requested_award_amounts(f"{original} {question} {'、'.join(branches)}", explicit=True)
+                if len(branches) > 1 and all('奖学金' in name for name in branches) and is_award_amount_question(original):
+                    awards = branches
+                else:
+                    awards = requested_award_amounts(f"{original} {question} {'、'.join(branches)}", explicit=True)
                 if awards:
                     items.append(answer_award_amounts(db, text, scope, awards))
                     continue
@@ -487,7 +509,8 @@ def answer_turn(db, text, context):
                 continue
             answer = policy_answer(db, question, {**scope,
                 '_planned_task': bool(task.get('clauses') or branches or aggregate),
-                '_branch_options': branches if aggregate else [], '_branch_question': branch_question})
+                '_branch_options': branches if aggregate else [], '_branch_question': branch_question,
+                '_aggregate_branches': aggregate})
             task_items = []
             for item in answer['items']:
                 if item['status'] == 'missing_material' or (
@@ -505,9 +528,8 @@ def answer_turn(db, text, context):
                             search_question = f"仅核实{'、'.join(selected)}这个范围内的问题：{missing}"
                         gap = fill_material_gap(db, {'question': missing, 'status': 'missing_material',
                                                      'search_question': search_question,
-                                                     'content': MATERIAL_GAP, 'citations': []})
-                        if aggregate:
-                            gap['content'] = f"{missing.rstrip('？?。')}：{gap['content']}"
+                                                     'content': MATERIAL_GAP, 'citations': []},
+                                                **({'brief': True} if aggregate else {}))
                         task_items.append(gap)
             if aggregate and len(task_items) > 1:
                 task_items = [combine_branch_answers(question, task_items)]

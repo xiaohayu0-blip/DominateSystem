@@ -263,6 +263,28 @@ def test_unselected_branch_cannot_become_a_web_followup(monkeypatch, chosen, oth
     assert chosen in item['content'] and other not in item['content']
 
 
+def test_multiple_leave_types_keep_local_conclusion_and_search_only_missing_type(monkeypatch):
+    question = '因病请假和因事请假分别需要什么材料？'
+    plan(monkeypatch, [{'question': question, 'kind': 'campus', 'branch_action': 'all',
+                       'branches': ['因病请假', '因事请假']}])
+
+    def policy(db, text, scope):
+        assert scope['_aggregate_branches']
+        return {'items': [{'question': text, 'status': 'answered', 'content': '因病请假：提交诊断证明。',
+                           'citations': [], 'missing_questions': ['因事请假要交什么材料？']}]}
+
+    def search(db, text, *, campus_gap, brief):
+        assert campus_gap and brief and text == '因事请假要交什么材料？'
+        return {'status': 'web_answer', 'content': '因事请假：提交请假申请。', 'citations': [],
+                'web_sources': [{'url': 'https://example.org/leave'}]}
+
+    monkeypatch.setattr(chat, 'policy_answer', policy)
+    monkeypatch.setattr(chat, 'find_web_answer', search)
+    item, = chat.answer_turn(None, question, {})['items']
+    assert item['content'] == '因病请假：提交诊断证明。\n因事请假：提交请假申请。'
+    assert item['web_sources']
+
+
 @pytest.mark.parametrize('reply,chosen', [
     ('生病的那一种', ['因病请假']),
     ('都说一下', ['因病请假', '因事请假']),

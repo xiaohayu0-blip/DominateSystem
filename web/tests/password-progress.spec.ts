@@ -1,5 +1,48 @@
 import { test, expect } from '@playwright/test'
 
+test('手机制度出处可滑动并始终能关闭', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 590 })
+  const profile = { id: 'source-student', role: 'student', name: '制度测试学生', phone: '13800000003',
+    major: '工商管理', class_name: '测试一班', children: [] }
+  const citation = { chunk_id: 'scholarship-rule', document_id: 'scholarship-doc', title: '本科生奖学金评定管理办法',
+    version: 'v1', location: '第1页', excerpt: '条款正文。\n'.repeat(100) + '制度末尾',
+    source_status: 'published', url: '/api/sources/scholarship-rule' }
+  const question = { id: 'source-question', text: '奖学金多少钱？', status: 'complete', alert: null,
+    created_at: '2026-11-21T05:25:00', answer: { items: [{
+      question: '奖学金多少钱？', status: 'answered', content: '学业奖学金分等级发放。', citations: [citation],
+    }] } }
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/me') return route.fulfill({ json: profile })
+    if (path === '/api/question-examples') return route.fulfill({ json: [] })
+    if (path === '/api/modes') return route.fulfill({ json: { environment: 'test', model: 'mock' } })
+    if (path === '/api/questions' || path === '/api/questions/source-question') return route.fulfill({ json: question })
+    if (path === '/api/questions/source-question/stream') {
+      return route.fulfill({ contentType: 'text/event-stream',
+        body: `event: complete\ndata: ${JSON.stringify(question)}\n\n` })
+    }
+    if (path === citation.url) return route.fulfill({ json: citation })
+    throw new Error('Unexpected API request: ' + path)
+  })
+  await page.goto('/')
+  await page.getByRole('textbox', { name: '你的问题' }).fill(question.text)
+  await page.getByRole('button', { name: '发送问题', exact: true }).click()
+  const source = page.getByRole('button', { name: /本科生奖学金评定管理办法/ })
+  await source.click()
+  const dialog = page.getByRole('dialog', { name: '引用来源' })
+  const body = dialog.locator('.source-dialog-scroll')
+  await body.hover()
+  await page.mouse.wheel(0, 800)
+  await expect.poll(() => body.evaluate(el => el.scrollTop)).toBeGreaterThan(0)
+  const close = dialog.getByRole('button', { name: '关闭', exact: true })
+  await expect(close).toBeInViewport()
+  await close.click()
+  await expect(dialog).toHaveCount(0)
+  await source.click()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+})
+
 for (const scenario of [
   { name: 'desktop', width: 1280, reducedMotion: 'no-preference' },
   { name: 'mobile', width: 390, reducedMotion: 'no-preference' },

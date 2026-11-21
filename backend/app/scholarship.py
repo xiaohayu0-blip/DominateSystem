@@ -53,8 +53,7 @@ def scholarship_request(query):
 
 
 def requested_award_amounts(query, *, explicit=False):
-    if (not AMOUNT.search(query) or not (explicit or ALL_BRANCHES.search(query))
-            or re.search(r"研究生|硕士|博士|申请|材料|截止|发放时间|什么时候发|名额|排名|条件|要求|加分|评审", query)):
+    if not is_award_amount_question(query) or not (explicit or ALL_BRANCHES.search(query)):
         return []
     names = [name for name, pattern in AWARD_NAMES.items() if re.search(pattern, query)]
     if len(names) >= 2:
@@ -62,6 +61,11 @@ def requested_award_amounts(query, *, explicit=False):
     if not names and re.search(r"(?<![\u4e00-\u9fff])奖学金|(?:每种|各种|各类|所有|本科生|学校)奖学金", query):
         return list(AWARD_NAMES)
     return []
+
+
+def is_award_amount_question(query):
+    return bool(re.search(r"奖学金|国奖|国励|校奖", query) and AMOUNT.search(query)
+                and not re.search(r"研究生|硕士|博士|申请|材料|截止|发放时间|什么时候发|名额|排名|条件|要求|加分|评审", query))
 
 
 def matching_clause(text, kind, award):
@@ -99,6 +103,11 @@ def scholarship_lookup(db, request, context, max_chars, *, compact=False):
         prefix = f"按{year}年版《{document.title.rsplit('.', 1)[0]}》：\n" if document.business_year else ""
         if compact and prefix:
             prefix = f"按{year}年版，"
+        if compact and len(prefix + text) > max_chars:
+            clauses = [sentence.strip() for sentence in re.split(r"(?<=[。！？])|\n", chunk.text)
+                       if matching_clause(sentence, kind, award)]
+            if len(clauses) == 1:
+                text = clauses[0]
         if len(prefix + text) <= max_chars:
             candidates.append((document.business_year == year, prefix + text, chunk, document))
     if candidates:

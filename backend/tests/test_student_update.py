@@ -128,7 +128,7 @@ def test_award_choice_is_understood_as_an_amount_followup(client):
     assert item['citations'][0]['document_id'] == doc_id
 
 
-@pytest.mark.parametrize("followup", ["都说一下", "每个都讲一下", "我想横向对比一下"])
+@pytest.mark.parametrize("followup", ["都说一下", "每个都讲一下", "我想横向对比一下", "都要"])
 def test_all_award_amounts_share_one_answer_and_keep_the_selected_year(client, monkeypatch, followup):
     signup(client, student())
     ids = {
@@ -138,20 +138,28 @@ def test_all_award_amounts_share_one_answer_and_keep_the_selected_year(client, m
     }
     publish('国家奖学金评选办法', '国家奖学金的奖励标准为每人每年12000元。', year=2026)
     initial = ask(client, '2025年奖学金多少钱？')
-    if followup == '我想横向对比一下':
+    searched = []
+    if followup in {'我想横向对比一下', '都要'}:
         monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
         def plan(db, text, context):
             assert text == followup and context['previous_branch']['kind'] == 'scholarship_amount'
-            return [{'question': text, 'kind': 'campus', 'branch_action': 'all_previous'}]
+            return [{'question': text, 'kind': 'campus',
+                     'branch_action': 'none' if followup == '都要' else 'all_previous'}]
         monkeypatch.setattr(conversation, 'plan_turn', plan)
-        def missing(*args, **kwargs):
-            raise conversation.MissingEvidence()
-        monkeypatch.setattr(conversation, 'find_web_answer', missing)
+        def amount(db, question, *, campus_gap):
+            assert campus_gap and '攀登奖学金' in question
+            searched.append(question)
+            return {'status': 'web_answer', 'content': '每学年7500元。', 'citations': [],
+                    'web_sources': [{'url': 'https://example.org/award'}]}
+        monkeypatch.setattr(conversation, 'find_web_answer', amount)
     item, = ask(client, followup, previous_id=initial['id'])['answer']['items']
     assert item['status'] == 'answered' and len(item['content']) <= 500
     assert all(value in item['content'] for value in ('10000元', '6000元', '学业奖学金', '攀登奖学金'))
     assert '12000元' not in item['content']
     assert {source['document_id'] for source in item['citations']} == ids
+    assert len(item['content'].splitlines()) == 4
+    if followup in {'我想横向对比一下', '都要'}:
+        assert len(searched) == 1 and '7500元' in item['content'] and item['web_sources']
 
 
 @pytest.mark.parametrize('question', ['桑麻奖学金有多少钱', '国家奖学金有多少钱，怎么申请？', '研究生国家奖学金有多少'])

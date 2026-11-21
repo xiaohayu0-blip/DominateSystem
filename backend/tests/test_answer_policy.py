@@ -119,3 +119,13 @@ def test_overlong_model_output_is_replaced_with_original(client, monkeypatch):
     item = ask(client, "奖学金申请")["answer"]["items"][0]
     assert calls == [False] and len(item["content"]) <= 500
     assert item["status"] == "answered" and item["content"].endswith(quote)
+def test_long_scholarship_citation_keeps_a_verified_short_answer():
+    from app.qa import cited_answer
+
+    quote = '学业奖学金一等奖1800元，二等奖1200元，三等奖800元。'
+    source = {'chunk_id': 'award', 'document_id': 'policy', 'title': '本科生奖学金评定管理办法',
+              'location': '第3页', 'excerpt': quote + '其他评定细则。' * 100}
+    answer, citations = cited_answer(
+        {'answer': quote, 'selections': [{'chunk_id': 'award', 'quote': quote}]},
+        [source], question='学业奖学金各等级金额是多少？', budget=500)
+    assert answer == quote and citations == [source]
