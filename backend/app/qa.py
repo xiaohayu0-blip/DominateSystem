@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from .config import settings
 from .competition import TEAM_SIZE_REPLY, competition_score
 from .competition_catalog import competition_classification
-from .evidence_numbers import comparisons, quantities, scenario_quantities
+from .evidence_numbers import check_enumerated_counts, compact_clause, comparisons, quantities, scenario_quantities
 from .models import Chunk, Document, Question
 from .policy_context import clarification_for, policy_query, search_policy_evidence
 from .question_planning import grouped_questions, question_clauses
@@ -41,9 +41,10 @@ class ModelFailure(Exception):
 
 
 class InvalidEvidence(Exception):
-    def __init__(self, reason, *, feedback=""):
+    def __init__(self, reason, *, feedback="", source_fallback=None):
         super().__init__(reason)
         self.feedback = feedback
+        self.source_fallback = source_fallback
 
 
 class MissingEvidence(Exception):
@@ -105,11 +106,16 @@ class DeepSeekModel:
             "校历称呼沿用第一学期、第二学期；日期答复无需机械重复学期名，别将开课日当报到日。"
             "若只能回答部分诉求，answer保留有依据的部分，selections保留对应原文；"
             "另用missing_questions数组列出尚无充分依据的自足问句，不把未回答的部分伪装成已回答。"
+            "只在原文同一句明确列出多个不同对象且有共同条件时，才用「这两项」之类的计数。"
+            "需额外提供enumerated_counts数组，每项含phrase（答复中完整且唯一的计数短语）、"
+            "chunk_id（所选原文片段编号）、members（按原文顺序逐字写出的完整名称）。"
+            "写明共同条件和适用时段，保留原文例外。无法指出具体名称时，直接写出有依据的内容。"
             "最后检查表达：除前述严肃事项外，answer应有自然口语开头、清楚的短段和1个表情或颜文字。"
             "不输出没有表情的公文式摘要；上述表达要求服从事实准确性，不能为幽默删改制度条件或突破字数限制。"
         )
         if retry:
             system += ("上一次输出未通过校验。请重新选取必要原文，核对 answer 的数值和单位都出现在所选摘录中。"
+                       "若并列对象的计数无法证实，直接写出原文里的对象名称，不说有几项。"
                        "优先使用给定的片段 ID 和准确行号，整行太长时用 quote 逐字复制必要原文。"
                        f"如答复超长，先压缩重写到{MAX_ANSWER_CHARS}字符以内，保留必要条件，不截断句子。")
         numbered = [{**source, "lines": dict(enumerate(source["excerpt"].split("\n"), 1))}
@@ -455,6 +461,12 @@ def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessme
         if not links(answer) <= links(content):
             raise InvalidEvidence("unsupported_summary_link")
         numeric_answer = policy_answer_text(answer, valid)
+        if selected.get("enumerated_counts"):
+            numeric_answer, verified_count, original = check_enumerated_counts(
+                numeric_answer, selected["enumerated_counts"], valid)
+            if not verified_count:
+                raise InvalidEvidence("unsupported_enumerated_count", source_fallback=original if len(valid) == 1 else None,
+                                      feedback="请直接写出原文中的对象全称，并保留共同条件、适用时段和例外。")
         answer_quantities = quantities(numeric_answer)
         policy_text = "\n".join(source["excerpt"] for source in valid)
         allowed_quantities = quantities(content)
@@ -892,10 +904,19 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                         if getattr(exc, "feedback", None):
                             retry_query += "\n" + exc.feedback
                         selected = model.select_evidence(retry_query, citations, retry=True)
-                        content, citations = verified_excerpts(
-                            selected, citations, cohort_options=cohort_options, deepseek=True,
-                            assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
-                            catalog_grades=catalog_grades, answer_budget=answer_budget, question=query)
+                        original = getattr(exc, "source_fallback", None)
+                        try:
+                            content, citations = verified_excerpts(
+                                selected, citations, cohort_options=cohort_options, deepseek=True,
+                                assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
+                                catalog_grades=catalog_grades, answer_budget=answer_budget, question=query)
+                        except InvalidEvidence as retry_error:
+                            if original and retry_error.source_fallback is None:
+                                retry_error.source_fallback = original
+                            raise
+                        if original and not selected.get("enumerated_counts") and (
+                                compact_clause(original["excerpt"]) not in compact_clause(content)):
+                            raise InvalidEvidence("unverified_enumeration_rewrite", source_fallback=original)
                         missing_questions = selected.get("missing_questions", [])
                 finally:
                     semaphore.release()
@@ -907,7 +928,15 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                 logger.warning("evidence_validation_failed type=%s reason=%s chunk_ids=%s",
                                type(exc).__name__, str(exc) if isinstance(exc, InvalidEvidence) else "invalid_shape",
                                [source["chunk_id"] for source in citations])
-                reason = "validation_failed"
+                source = getattr(exc, "source_fallback", None)
+                quote = source["excerpt"].strip() if source else ""
+                lead = "这条规定的原文是：\n"
+                if quote and len(lead + quote) <= answer_budget and not (
+                        calendar or calculation or assessment or catalog_grades or cohort_options or special):
+                    content, citations = lead + quote, [source]
+                    logger.info("evidence_quote_fallback chunk_id=%s", source["chunk_id"])
+                else:
+                    reason = "validation_failed"
         if not reason:
             content = prefix + content
             if historical:

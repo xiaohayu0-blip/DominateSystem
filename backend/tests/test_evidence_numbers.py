@@ -37,6 +37,97 @@ def test_decimal_percentages_dates_and_real_amounts_are_not_removed_as_bullets()
     assert not quantities("时间点分别说明，重点分析。")
 
 
+def count_case(original, answer, members, phrase="这两项"):
+    reference = {"chunk_id": "rule", "document_id": "policy", "excerpt": original,
+                 "title": "办理规定", "location": "第1条"}
+    selected = {"answer": answer, "selections": [{"chunk_id": "rule", "quote": original}],
+                "enumerated_counts": [{"phrase": phrase, "chunk_id": "rule", "members": members}]}
+    return selected, [reference]
+
+
+@pytest.mark.parametrize(("original", "answer", "members"), [
+    ("智育成绩排名与综合测评成绩排名均须达到前10%。", "这两项都须达到前10%。",
+     ["智育成绩排名", "综合测评成绩排名"]),
+    ("申请表与成绩单均须在三个工作日内提交。", "这两项都须在3个工作日内提交。",
+     ["申请表", "成绩单"]),
+    ("志愿服务与社会实践均可加0.3分，且同一项目不重复计分。", "这两项都可加0.3分，且同一项目不重复计分。",
+     ["志愿服务", "社会实践"]),
+])
+def test_derived_count_matches_named_members_and_shared_original_condition(original, answer, members):
+    selected, sources = count_case(original, answer, members)
+    assert verified_excerpts(selected, sources, cohort_options=False, deepseek=True)[0] == answer
+
+
+@pytest.mark.parametrize("answer", [
+    "这两项都须达到前30%。",
+    "这两项都须低于前10%。",
+    "这两项都须达到前10%。另外至少提交两项证明。",
+])
+def test_count_grounding_does_not_exempt_wrong_or_unrelated_quantities(answer):
+    selected, sources = count_case("智育排名与综测排名均须达到前10%。",
+                                   answer, ["智育排名", "综测排名"])
+    with pytest.raises(InvalidEvidence):
+        verified_excerpts(selected, sources, cohort_options=False, deepseek=True)
+
+
+@pytest.mark.parametrize(("original", "answer"), [
+    ("申请表与成绩单均须提交，且无不及格科目。", "这两项都须提交。"),
+    ("申请表与成绩单均须提交。若因系统故障无法提交，可走人工审核。", "这两项都须提交。"),
+    ("仅限大二同学申请。申请表与成绩单均须提交。", "这两项都须提交。"),
+    ("申请表、成绩单与获奖证明均须提交。", "这两项都须提交。"),
+    ("申请表须提交。成绩单须提交。", "这两项都须提交。"),
+])
+def test_count_grounding_keeps_scope_conditions_exceptions_and_full_enumeration(original, answer):
+    selected, sources = count_case(original, answer, ["申请表", "成绩单"])
+    with pytest.raises(InvalidEvidence):
+        verified_excerpts(selected, sources, cohort_options=False, deepseek=True)
+
+
+def test_failed_count_rewrite_displays_complete_cited_clause(client, monkeypatch):
+    signup(client, student())
+    original = "申请表与成绩单均须在三个工作日内提交。若系统故障，可向学院申请人工审核。"
+    doc_id = publish("奖学金材料提交办法", original)
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    attempts = []
+
+    def wrong_count(_, query, candidates, *, retry=False):
+        attempts.append(retry)
+        if retry:
+            assert "对象全称" in query
+        return {"answer": "这两项都须在5个工作日内提交。",
+                "selections": [{"chunk_id": candidates[0]["chunk_id"], "quote": original}],
+                "enumerated_counts": [{"phrase": "这两项", "chunk_id": candidates[0]["chunk_id"],
+                                       "members": ["申请表", "成绩单"]}]}
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", wrong_count)
+    item, = ask(client, "奖学金申请材料要在几天内提交？")["answer"]["items"]
+    assert attempts == [False, True]
+    assert item["status"] == "answered" and original in item["content"]
+    assert "5个工作日" not in item["content"] and item["citations"][0]["document_id"] == doc_id
+
+
+def test_rewrite_without_counter_cannot_promote_an_exception_to_general_rule(client, monkeypatch):
+    signup(client, student())
+    original = "申请表与成绩单均须在三个工作日内提交。若系统故障，可在五个工作日内补交。"
+    publish("奖学金材料提交办法", original)
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+
+    def model(_, query, candidates, *, retry=False):
+        chunk = candidates[0]["chunk_id"]
+        selection = {"answer": "申请表与成绩单均须在五个工作日内提交。",
+                     "selections": [{"chunk_id": chunk, "quote": original}]}
+        if not retry:
+            selection["answer"] = "这两项都须在三个工作日内提交。"
+            selection["enumerated_counts"] = [{"phrase": "这两项", "chunk_id": chunk,
+                                                "members": ["申请表", "成绩单"]}]
+        return selection
+
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", model)
+    item, = ask(client, "奖学金申请材料要在几天内提交？")["answer"]["items"]
+    assert item["status"] == "answered" and original in item["content"]
+    assert "均须在五个工作日内提交" not in item["content"]
+
+
 @pytest.mark.parametrize("days", [3, 5])
 def test_normalized_days_do_not_allow_invented_periods(days):
     with SessionLocal() as db:
