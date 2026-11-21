@@ -366,6 +366,8 @@ def answer_turn(db, text, context):
     resolved_context = context
     for task in tasks:
         question, kind = task['question'], task['kind']
+        if kind == 'campus' and len(tasks) == 1 and task.get('clauses') and not context.get('history'):
+            question = text
         scope = dict(context)
         years = set(re.findall(YEAR_WORD, question))
         grades = set(re.findall(GRADE_WORD, question))
@@ -379,7 +381,7 @@ def answer_turn(db, text, context):
             items.extend(policy_answer(db, question, scope)['items'])
             continue
         if kind == 'campus':
-            answer = policy_answer(db, question, scope)
+            answer = policy_answer(db, question, {**scope, "_planned_task": bool(task.get("clauses"))})
             pending = []
             for item in answer['items']:
                 if item['status'] == 'missing_material':

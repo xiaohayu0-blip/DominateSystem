@@ -214,7 +214,7 @@ class HybridRetriever:
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
         asof = today.isoformat() if year == today.year else f"{year}-12-31"
         rows = db.execute(select(Chunk, Document).join(Document).where(
-            Document.status == "published", Document.parse_status == "ready")).all()
+            Document.status == "published", Document.parse_status == "ready")).order_by(Document.id, Chunk.location, Chunk.id).all()
         if block := procedure_block(rows, text):
             return block, ""
         scored, cohort_options = [], {}
@@ -333,7 +333,7 @@ class HybridRetriever:
                 else:
                     rest.append(row)
             scored = head + rest
-        return [(c, d) for _, c, d in scored[:8]], ""
+        return [(c, d) for _, c, d in scored[:context.get("_candidate_limit", 8)]], ""
 
 
 retriever = HybridRetriever()

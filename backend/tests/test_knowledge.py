@@ -817,7 +817,7 @@ def test_unknown_source_and_scope(client):
     assert item["status"] == "answered" and item["citations"]
 
 
-def test_annual_holiday_question_uses_published_year_excerpt(client, monkeypatch):
+def test_annual_holiday_question_uses_published_year_excerpt(monkeypatch):
     from app.conversation import answer_turn
     from app.qa import CALENDAR_YEAR_LOCATION_PREFIX
 
@@ -833,3 +833,30 @@ def test_annual_holiday_question_uses_published_year_excerpt(client, monkeypatch
                 item, = answer_turn(db, question, {"business_year": 2026, "history": history})["items"]
                 assert item["status"] == "answered" and item["content"] == excerpt
                 assert item["citations"][0]["chunk_id"] == chunk.id
+
+
+def test_missing_policy_evidence_expands_candidates_and_validates_retry(monkeypatch):
+    from app import qa
+
+    doc_id = publish("请假规定", "请假需要提交申请表。")
+    with SessionLocal() as db:
+        row = db.execute(select(Chunk, Document).join(Document).where(Document.id == doc_id)).one()
+        limits = []
+
+        def search(db, query, context):
+            limits.append(context.get("_candidate_limit", 8))
+            return [row], ""
+
+        def select_evidence(self, question, evidence, *, retry=False):
+            if not retry:
+                return {"answer": "", "selections": []}
+            return {"answer": "请假需要提交申请表。", "selections": [
+                {"chunk_id": row.Chunk.id, "quote": row.Chunk.text}]}
+
+        monkeypatch.setattr(settings(), "model_mode", "deepseek")
+        monkeypatch.setattr(qa, "search_policy_evidence", search)
+        monkeypatch.setattr(DeepSeekModel, "select_evidence", select_evidence)
+        result = qa.answer_question(db, "请假需要什么材料", {"business_year": 2026})
+        assert limits == [8, 16]
+        assert result["items"][0]["status"] == "answered"
+        assert result["items"][0]["citations"][0]["document_id"] == doc_id

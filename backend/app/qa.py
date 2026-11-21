@@ -731,7 +731,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
     results = []
     model = ExtractiveMock() if settings().model_mode == "mock" else DeepSeekModel()
     full_query = policy_query(retrieval_query(text, context))
-    parts = [text] if clarification_for(full_query) else planned_questions(db, text, model)
+    parts = [text] if context.get("_planned_task") or clarification_for(full_query) else planned_questions(db, text, model)
     for part in parts:
         query = policy_query(normalize_roster_query(retrieval_query(part, context)))
         if TECHNICAL_LIMIT_QUESTION.search(query):
@@ -863,7 +863,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                             assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
                             catalog_grades=catalog_grades, answer_budget=answer_budget, question=query)
                         missing_questions = selected.get("missing_questions", [])
-                    except InvalidEvidence as exc:
+                    except (InvalidEvidence, MissingEvidence) as exc:
                         if not isinstance(model, DeepSeekModel):
                             raise
                         logger.warning("evidence_validation_retry reason=%s chunk_ids=%s",
@@ -871,7 +871,16 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                         retry_query = model_query + (f"\n上次校验失败原因：{exc}。"
                             f"若超长，压缩重写至{answer_budget}字符以内；保留条件和完整句子。"
                             "证据不足时返回空selections，不要猜测分值。")
-                        if exc.feedback:
+                        if (not (calendar or calculation or catalog_citations or assessment_citations
+                                 or special or cohort_options) and (isinstance(exc, MissingEvidence)
+                                 or str(exc) in {"unsupported_summary_quantity", "reversed_summary_condition"})):
+                            expanded, flag = search_policy_evidence(db, query, {**context, "_candidate_limit": 16})
+                            wider = [citation(chunk, doc) for chunk, doc in expanded]
+                            if (not flag and wider and scope_notice(wider, context) == (scope_prefix, historical)
+                                    and not detect_conflict(wider, query)
+                                    and {c["admission_year"] for c in wider} == {c["admission_year"] for c in citations}):
+                                citations = wider
+                        if getattr(exc, "feedback", None):
                             retry_query += "\n" + exc.feedback
                         selected = model.select_evidence(retry_query, citations, retry=True)
                         content, citations = verified_excerpts(
