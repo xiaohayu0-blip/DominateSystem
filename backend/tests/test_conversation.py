@@ -16,6 +16,35 @@ real_search = chat.search_web
 real_plan = chat.plan_turn
 
 
+@pytest.mark.parametrize('question', [
+    '周日晚上我回不来学校，晚点名去不了，我找谁请假',
+    '周日晚点名赶不上，要找班主任还是辅导员？',
+])
+def test_contact_question_searches_the_activity_before_asking_about_leave_type(client, monkeypatch, question):
+    signup(client, student())
+    rule = '日常管理班主任每周日按照学校要求召开所带年级全部班级线下晚点名班会。'
+    doc_id = publish('管理学院班主任管理办法', rule)
+    publish('学生考勤管理办法', '请病假应提供校医院出具的病假证明，事假应提供请假事由证明。')
+    expected = ('先联系日常管理班主任，说明周日无法返校。办法明确由他们负责晚点名，'
+                '具体请假怎么报批请按班级通知确认。')
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', real_plan)
+
+    def model(self, system, payload):
+        if 'current_question' in payload:
+            return {'tasks': [{'kind': 'campus', 'question': question,
+                               'clauses': [clause['index'] for clause in payload['clauses']],
+                               'clarify_options': ['因事请假', '因病请假']}]}
+        assert '晚点名' in payload['question']
+        source = next(item for item in payload['untrusted_evidence'] if item['document_id'] == doc_id)
+        return {'answer': expected, 'selections': [{'chunk_id': source['chunk_id']}]}
+
+    monkeypatch.setattr(DeepSeekModel, 'request_json', model)
+    item, = ask(client, question)['answer']['items']
+    assert item['status'] == 'answered' and item['content'] == expected
+    assert item['citations'][0]['document_id'] == doc_id
+
+
 @pytest.mark.parametrize('reply', ['因病', '病假', '那就因病吧'])
 def test_sick_leave_short_answer_resumes_original_question_and_cites_rule(client, monkeypatch, reply):
     signup(client, student())
@@ -32,6 +61,8 @@ def test_sick_leave_short_answer_resumes_original_question_and_cites_rule(client
                 return {'tasks': [{'kind': 'campus', 'question': question, 'clauses': [0],
                                    'clarify_options': ['因病请假', '因事请假', '公假']}]}
             return {'tasks': [{'kind': 'general', 'question': reply, 'clauses': [0]}]}
+        if '候选分支' in payload['question']:
+            return {'answer': '你想问因病请假、因事请假，还是公假？', 'needs_clarification': True}
         assert '请假要交哪些材料' in payload['question'] and '因病请假' in payload['question']
         source = next(item for item in payload['untrusted_evidence'] if item['document_id'] == doc_id)
         return {'answer': expected, 'selections': [{'chunk_id': source['chunk_id'],
@@ -74,7 +105,12 @@ def test_ambiguous_short_branch_reply_is_not_guessed(monkeypatch):
         'kind': 'campus', 'question': context['previous_branch']['question'],
         'clarify_options': ctx['previous_branch']['options'],
     }])
-    item, = chat.answer_turn(None, '因病', context)['items']
+    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *args: {
+        'answer': '是因病休学后复学，还是因病保留学籍后入学？', 'needs_clarification': True,
+    })
+    context['business_year'] = 2026
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, '因病', context)['items']
     assert item['status'] == 'needs_clarification'
 
 
@@ -106,6 +142,8 @@ def test_how_to_request_sick_leave_answers_the_process_after_short_reply(client,
             assert payload['current_question'] == '怎么请假'
             return {'tasks': [{'kind': 'campus', 'question': '怎么请假', 'clauses': [0],
                                'clarify_options': ['因病请假', '因事请假']}]}
+        if '候选分支' in payload['question']:
+            return {'answer': '是因病请假还是因事请假？', 'needs_clarification': True}
         assert '怎么请假' in payload['question'] and '因病请假' in payload['question']
         source = next(item for item in payload['untrusted_evidence'] if item['document_id'] == doc_id)
         return {'answer': expected, 'selections': [{'chunk_id': source['chunk_id'], 'start_line': 999, 'end_line': 999}]}
@@ -403,6 +441,8 @@ def test_router_asks_for_branch_and_resumes_the_same_request(monkeypatch, reply,
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     monkeypatch.setattr(chat, 'plan_turn', real_plan)
     def route(self, system, payload):
+        if 'untrusted_evidence' in payload:
+            return {'answer': '你想问因病请假还是因事请假？', 'needs_clarification': True}
         task = {'question': question, 'kind': 'campus', 'clauses': [0]}
         if previous := payload['previous_branch']:
             assert previous['options'] == ['因病请假', '因事请假']

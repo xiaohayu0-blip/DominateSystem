@@ -8,6 +8,8 @@ from .retrieval import retriever
 
 COMPATIBLE_ALIASES = {r"国励(?:奖学金|奖)?": "国家励志奖学金", r"舍涨": "寝室长"}
 SAFETY_ANCHORS = re.compile(r"刷单|出租.{0,4}账号|出借银行卡|银行卡过账")
+ACTIVITY_ANCHORS = re.compile(r"晚点名|班会|早操|军训|体测|实习|迎新|缓考")
+ATTENDANCE_ACTION = re.compile(r"请假|报备|缺席|参加不了|赶不上|去不了")
 
 
 def policy_query(text):
@@ -56,6 +58,17 @@ def search_policy_evidence(db, query, context):
     evidence, special = retriever.search(db, query, context)
     if not evidence and (anchor := SAFETY_ANCHORS.search(query)):
         evidence, special = retriever.search(db, anchor[0], context)
+    if ATTENDANCE_ACTION.search(query) and special not in {"roster_match", "needs_clarification"}:
+        # Activity instructions may name the person in charge without repeating the requested action.
+        activity_hits = []
+        for activity in dict.fromkeys(ACTIVITY_ANCHORS.findall(query)):
+            if any(activity in chunk.text for chunk, _ in evidence):
+                continue
+            candidates, _ = retriever.search(db, activity, {**context, "_candidate_limit": 3})
+            activity_hits.extend((chunk, doc) for chunk, doc in candidates if activity in chunk.text)
+        if activity_hits:
+            by_id = {chunk.id: (chunk, doc) for chunk, doc in activity_hits + evidence}
+            evidence = list(by_id.values())
 
     identity_lookup = (
         re.search(r"班主任|辅导员|老师", query)

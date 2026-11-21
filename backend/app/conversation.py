@@ -47,8 +47,9 @@ def plan_turn(db, text, context):
         '“联网确认一下”“帮我查查”等只是修饰当前诉求，不能拆成另一个任务。'
         '按独立业务事项分组，同一事项的能否、多少、条件、材料、时间、步骤及补充追问必须合为一个任务，'
         '一次完整回答。例如“当寝室长能加综测分吗？能加多少啊？”只能生成一个campus任务。'
-        '校园咨询只给出大类，且分支不同会改变答案时，在该任务的clarify_options列出2至6个合理的分支名称，'
-        '例如“请假要交什么材料”可列出“因病请假”和“因事请假”。选项只写名称，不假定制度内容。'
+        'clarify_options只列出可能影响所问结论的分支，供查资料后判断是否追问。'
+        '用户已交代具体活动并问找谁、向谁报备或如何办理时，保留该活动和要问的事项，不能改成泛问。'
+        '例如周日晚点名缺席问找谁请假，应检索晚点名职责；问请假要交什么材料时才考虑请假类别。'
         '能直接回答的概览、已给分支的问题、明确要求分别说明的问题无需追问。'
         '“都说一下”“每种都讲”等指向同一大类的各分支时，要承接前文，把原诉求和各分支放进同一个任务，供一次汇总回答；'
         '已知各分支名称且用户要求汇总时，用branches列出这些名称，便于分别查找依据。'
@@ -478,15 +479,11 @@ def prepare_turn(db, text, context):
                 if awards:
                     items.append(answer_award_amounts(db, text, scope, awards))
                     continue
-            options = task.get('clarify_options', [])
-            if len(options) >= 2 and not aggregate:
-                items.append({'question': question, 'status': 'needs_clarification', 'citations': [],
-                              'clarification_kind': 'topic_branch', 'clarification_options': options,
-                              'content': f"你想了解哪一种：{'、'.join(options)}？"})
-                continue
+            options = task.get('clarify_options', []) if not aggregate and not selected else []
             answer = policy_answer(db, question, {**scope,
-                '_planned_task': bool(task.get('clauses') or branches or aggregate),
-                '_branch_options': branches if aggregate else [], '_branch_question': branch_question})
+                '_planned_task': bool(task.get('clauses') or branches or aggregate or options),
+                '_branch_options': branches if aggregate else [], '_branch_question': branch_question,
+                '_clarification_options': options if len(options) >= 2 else []})
             task_items = []
             for item in answer['items']:
                 if item['status'] == 'missing_material':

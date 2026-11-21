@@ -65,6 +65,9 @@ class DeepSeekModel:
         system = (
             "你为学生解答学校制度。先选能直接回答问题的最短原文，再基于所选原文用自己的话简洁回答，先给结论。"
             "answer只输出能直接回答用户问题的内容，不写‘小八找到的相关原文’、检索过程或引导语。完整原文由出处展示。"
+            "先根据资料回答用户具体问的联系人、条件或步骤。候选分支只有在不同选择会改变所问结论且不能直接回答时才用来追问。"
+            "若必须追问且提供了候选分支，设置needs_clarification:true，answer里提出一个简短问题。"
+            "只查到活动负责人时，可以建议先联系该负责人核实手续，不能称其为审批人。"
             "只选和问题直接相关的摘录，保留影响结论的条件与例外。适用年级有差异时，分别选取各年级对应的摘录。"
             "selections 必须保留原文，answer 用自然语言转述。不要把表头或整段原文堆进 answer。"
             "你是校园小助手‘小八’，像耐心熟悉校园事务的同学一样说话：轻松自然，先接住学生的话，再把事情讲明白。"
@@ -100,7 +103,8 @@ class DeepSeekModel:
             "可以依据资料解释资格条件、核对题设及给出参考计算，不宣称已完成现实中的审批或操作。"
             "年度、年级和有效期不同的资料要标明适用范围，不将历史依据当成现行规定。"
             "不得编造资料没有的事实。输出JSON对象："
-            '{"answer":"直接回答问题的简短说明","needs_search":false,"selections":[{"chunk_id":"已给出的ID","start_line":1,"end_line":2}]}。'
+            '{"answer":"直接回答问题的简短说明","needs_search":false,"needs_clarification":false,'
+            '"selections":[{"chunk_id":"已给出的ID","start_line":1,"end_line":2}]}。'
             "行号从1开始，起止均包含。只需一行时起止相同。如单行过长，可以改用 quote 字段提供逐字原文短摘录。"
             "引用只选择必要原文，保留关键条件，不得断章取义。"
             "先核对评定范围、适用对象和必要条件，再判断能否申请，不能仅凭排名或获奖就保证资格。"
@@ -860,6 +864,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
     report_progress("searching")
     results = []
     model = ExtractiveMock() if settings().model_mode == "mock" else DeepSeekModel()
+    clarification_options = context.get("_clarification_options", [])
     full_query = policy_query(retrieval_query(text, context))
     single_item = context.get("_planned_task") or clarification_for(full_query) or scholarship_request(full_query)
     parts = [text] if single_item else planned_questions(db, text, model)
@@ -988,7 +993,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                 f"{c['roster_field']}为{c['roster_value']}。" for c in citations)
         if re.search(r"大[一二三四]|今年入学|往年", part) and not context.get("admission_year") and not citations:
             reason = "needs_clarification"
-        elif not citations and not reason:
+        elif not citations and not reason and not (clarification_options and isinstance(model, DeepSeekModel)):
             reason = "missing_material"
         elif isinstance(model, ExtractiveMock) and not (cohort_options or calculation or len(context.get("_branch_options", [])) > 1) and detect_conflict(citations, query):
             reason = "document_conflict"
@@ -1003,6 +1008,9 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                 try:
                     deepseek = isinstance(model, DeepSeekModel)
                     model_query = scrub(query)
+                    if clarification_options:
+                        model_query += ("\n分流阶段给出的候选分支：" + "、".join(clarification_options)
+                                        + "。按检索资料判断是否影响用户实际所问。若缺少资料且无需追问，返回needs_search:true。")
                     if prefix:
                         model_query += "\n适用范围以以下核实信息为准，必要时用一句话说明：" + prefix
                     if calendar and not holiday_overview:
@@ -1014,6 +1022,14 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                         model_query += ("\n先给有依据的寒暑假起止日期。未询问资料覆盖范围时省去范围说明。"
                                         "节日当天、连休和调休分别说明，缺少日期时如实说明。")
                     selected = model.select_evidence(model_query, citations)
+                    if (clarification_options and isinstance(selected, dict)
+                            and selected.get("needs_clarification") is True
+                            and isinstance(selected.get("answer"), str) and selected["answer"].strip()):
+                        results.append({"question": part, "status": "needs_clarification",
+                                        "content": selected["answer"], "citations": [],
+                                        "clarification_kind": "topic_branch",
+                                        "clarification_options": clarification_options})
+                        continue
                     content, citations = cited_answer(selected, citations,
                                                       cohort_options=cohort_options, deepseek=deepseek)
                     missing_questions = selected.get("missing_questions", [])
