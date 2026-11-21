@@ -33,6 +33,8 @@ test('public home and narrow dark-mode chat', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '制度咨询与办理指引' })).toBeVisible()
   await expect(page.locator('.tactile-art .octopus-mascot')).toBeVisible()
   await expect(page.getByRole('link', { name: '管理工作台' })).toHaveCount(0)
+  await expect(page.locator('a[href="/admin"], a[href="#/admin"]')).toHaveCount(0)
+  await expect(page.getByText(/工作台|管理后台/)).toHaveCount(0)
   await page.getByText('隐私协议', { exact: true }).click()
   await expect(page.getByText(/触发危机预警时/)).toBeVisible()
   await page.locator('.account-actions').getByRole('button', { name: '登录账号', exact: true }).click()

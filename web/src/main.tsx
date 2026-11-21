@@ -236,7 +236,7 @@ function UserApp() {
         <p>学生和家长可在这里查询学院制度，了解请假、综合测评和奖学金评定的办理条件。</p>
         {landing && <>
           <p>提问时可以注明业务年度。答复会列出引用的文件和条文位置，方便你核对原文及适用范围。</p>
-          <p>现有资料暂时无法回答的咨询会记录到工作台，供学院后续核对和补充。</p>
+          <p>学院会汇总暂时无法回答的问题，并核对、补充相关资料。</p>
         </>}
       </section>}
       <aside className="entry-intro" id="service-notes"><details className="service-disclosure" open={notesOpen} onToggle={e => setNotesOpen(e.currentTarget.open)}><summary>使用说明与服务范围<ChevronRight size={16}/></summary><div className="service-points">
