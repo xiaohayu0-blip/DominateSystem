@@ -246,6 +246,23 @@ def test_router_keeps_named_independent_topics_separate(monkeypatch):
     assert len(tasks) == 2
 
 
+@pytest.mark.parametrize('chosen,other', [('国家奖学金', '社会奖学金'), ('因病请假', '因事请假')])
+def test_unselected_branch_cannot_become_a_web_followup(monkeypatch, chosen, other):
+    plan(monkeypatch, [{'question': '请比较两个选项', 'kind': 'campus', 'branch_action': 'all_previous'}])
+    monkeypatch.setattr(chat, 'policy_answer', lambda db, question, scope: {'items': [{
+        'question': question, 'status': 'answered', 'content': f'{chosen}的相关规定。', 'citations': [],
+        'missing_questions': [f'{other}的条件是什么？'],
+    }]})
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('未选择的分支被发去联网查询')
+
+    monkeypatch.setattr(chat, 'fill_material_gap', unexpected)
+    previous = {'kind': 'topic_branch', 'question': '这个怎么申请？', 'options': [chosen, other], 'scope': {}}
+    item, = chat.answer_turn(None, chosen, {'previous_branch': previous})['items']
+    assert chosen in item['content'] and other not in item['content']
+
+
 @pytest.mark.parametrize('reply,chosen', [
     ('生病的那一种', ['因病请假']),
     ('都说一下', ['因病请假', '因事请假']),

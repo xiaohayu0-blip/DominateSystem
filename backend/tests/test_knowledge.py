@@ -472,7 +472,23 @@ def test_calendar_single_year_lists_festival_marks(client, monkeypatch):
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "26年有哪些假可以放？分别从几月几号休到几月几号？")["answer"]["items"][0]
     assert item["status"] == "answered" and "中秋节" in item["content"] and "国庆节" in item["content"]
+    assert "覆盖范围" not in item["content"] and "未列出2026年的寒暑假" in item["content"]
     assert calls == []
+
+
+def test_annual_calendar_answers_vacations_from_the_same_school_year(client):
+    from app.calendar_index import CALENDAR_DATA, verified_calendar_parts
+
+    signup(client, student())
+    doc_id = publish("2026-2027校历", "原校历")
+    with SessionLocal() as db:
+        doc = db.get(Document, doc_id)
+        build_chunks(db, doc, verified_calendar_parts(next(CALENDAR_DATA.glob("*.json")).stem), structured=True)
+        db.commit()
+    item, = ask(client, "2026年学校有哪些假期？")["answer"]["items"]
+    assert item["status"] == "answered" and item["content"].index("寒假") < item["content"].index("中秋节")
+    assert "暑假" in item["content"] and "2027年" in item["content"]
+    assert "覆盖范围" not in item["content"] and len(item["citations"]) == 2
 
 
 def test_competition_catalog_distinguishes_main_and_special_tracks(client, monkeypatch):
@@ -804,7 +820,8 @@ def test_annual_holiday_question_uses_published_year_excerpt(monkeypatch):
         for question in ("今年什么时候放假啊", "请问本校2026年几号放假？"):
             for history in ([], [{"role": "user", "content": "奖学金金额是多少"}]):
                 item, = answer_turn(db, question, {"business_year": 2026, "history": history})["items"]
-                assert item["status"] == "answered" and item["content"] == excerpt
+                assert item["status"] == "answered" and "国庆节10月1日" in item["content"]
+                assert "校历覆盖" not in item["content"] and "未列出2026年的寒暑假" in item["content"]
                 assert item["citations"][0]["chunk_id"] == chunk.id
 
 

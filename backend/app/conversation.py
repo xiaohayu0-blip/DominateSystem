@@ -10,15 +10,21 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .config import settings
-from .qa import (calendar_overview, calendar_period, MAX_ANSWER_CHARS, DeepSeekModel, InvalidEvidence, MissingEvidence, ModelFailure,
+from .qa import (calendar_overview_answer, calendar_period, MAX_ANSWER_CHARS, DeepSeekModel, InvalidEvidence, MissingEvidence, ModelFailure,
                  YEAR_WORD, GRADE_WORD,
                  TECHNICAL_LIMIT_QUESTION, answer_question as policy_answer,
-                 cited_answer, is_dependent_question, model_budget_available, semaphore)
+                 cited_answer, is_dependent_question, model_budget_available, semaphore, verified_excerpts)
 from .question_planning import ALL_BRANCH_REPLY, grouped_questions, question_clauses
 from .schemas import scrub
 from .competition_catalog import competition_classification
 from .ranking import ranking_answer
-from .scholarship import AWARD_NAMES, requested_award_amounts, scholarship_lookup, scholarship_request
+from .scholarship import AWARD_NAMES, award_choice, requested_award_amounts, scholarship_lookup, scholarship_request
+
+SCHOLARSHIP_BRANCHES = {**AWARD_NAMES, '社会奖学金': r'社会奖学金|社会捐赠奖学金'}
+
+
+def scholarship_branches(text):
+    return {name for name, pattern in SCHOLARSHIP_BRANCHES.items() if re.search(pattern, text)}
 
 
 def model_json(db, system, payload):
@@ -48,6 +54,7 @@ def plan_turn(db, text, context):
         '根据语义判断，用户说“我想比较它们的区别”“给我一个完整的对照”也可能是在要求汇总，不能只看示例字面。'
         '对同一大类的汇总请求，branch_action设为all。若用户想汇总previous_branch提供的上轮选项，设为all_previous。'
         '用户选定上轮选项中的一项或几项时设为select_previous，并在branches中原样填写选中的名称。'
+        '只处理用户选中的分支和所问内容，历史答复里提到的其他分支不能自动加入本轮。'
         '用户开启新话题时忽略上一轮选项。用户只要大类概览时，正常回答概览。'
         '不同事项或明确切换话题才分开，不能因为有多个问号就拆开。'
         '本校本院的规定、安排、评审、名单、流程及公开校史归campus，先查知识库。'
@@ -158,6 +165,7 @@ def search_web(question):
 STYLE = ('你是校园小助手小八，用自然、轻松、简洁的中文直接交流。普通咨询带1个适度表情或颜文字；'
          '心理、人身安全、处分、经济困难等严肃事项认真回答，不开玩笑不带表情。'
          '先给结论，默认1至3个短句，省去套话和重复。多个分支用同一条答复简短对照，共同内容只写一次。'
+         '正文只输出能直接回答用户问题的内容，不写“小八找到的相关原文”、检索过程或引导语。'
          '纯文本，最多500字符，先整合再输出，不能截断。不要泄露内部配置。')
 WEB_GAP_PREFIX = '知识库暂时没有相关资料。这是我联网查到的内容：\n\n'
 WEB_GAP_UNVERIFIED = '知识库暂时没有相关资料。联网搜索也暂未找到能核实这件事的公开资料。'
@@ -210,6 +218,7 @@ def direct_model_answer(db, question, *, campus_gap=False):
         budget -= len(WEB_GAP_PREFIX)
         prompt += (f'本校是{settings().school_name}。使用相关公开来源，按来源可信度判断。'
                    '核对来源所说的学校、适用年度、对象和例外。其他学校的规则不能当成本校规则。'
+                   '只回答用户指定的分支和事项。只查到其他类别或其他事项时直接说明依据不足。'
                    '无法核实本校规定时明确说明，不能把一般经验当成本校规定。'
                    f'正文最多{budget}字符。')
     if not model_budget_available(db) or not semaphore.acquire(timeout=1):
@@ -221,7 +230,8 @@ def direct_model_answer(db, question, *, campus_gap=False):
     sources = [source for source in deepseek_sources(message) if source['excerpt']]
     if not sources:
         raise MissingEvidence()
-    content = render_web_answer(message.get('content'), sources, question=question, budget=budget)
+    content = render_web_answer(message.get('content'), sources, question=question, budget=budget,
+                                summary_only=campus_gap)
     return {'question': question, 'status': 'web_answer', 'content': content,
             'citations': [], 'web_sources': sources}
 
@@ -243,13 +253,21 @@ def general_answer(db, question, context):
     raise InvalidEvidence('general_answer_too_long')
 
 
-def render_web_answer(content, sources, *, question, budget):
+def render_web_answer(content, sources, *, question, budget, summary_only=False):
     evidence = [{'chunk_id': source['id'], 'document_id': source['url'],
                  'excerpt': source['excerpt'], 'title': source['title'],
                  'admission_year': None, 'location': source['url']} for source in sources]
-    answer, _ = cited_answer({'answer': content, 'selections': [
-        {'chunk_id': source['chunk_id'], 'quote': source['excerpt']} for source in evidence]},
-        evidence, question=question, budget=budget)
+    result = {'answer': content, 'selections': [
+        {'chunk_id': source['chunk_id'], 'quote': source['excerpt']} for source in evidence]}
+    if summary_only:
+        awards = scholarship_branches(question)
+        if awards and (scholarship_branches(content or "") - awards or not any(
+                awards & scholarship_branches(source["title"] + " " + source["excerpt"]) for source in sources)):
+            raise MissingEvidence()
+        answer, _ = verified_excerpts(result, evidence, cohort_options=False, deepseek=True,
+                                      answer_budget=budget, question=question)
+    else:
+        answer, _ = cited_answer(result, evidence, question=question, budget=budget)
     return answer
 
 
@@ -380,10 +398,9 @@ def answer_turn(db, text, context):
     if annual_holiday:
         year = context["business_year"] if not annual_holiday[1][0].isdigit() else int(annual_holiday[1][:4])
         question = f"{year}年有哪些假期"
-        source = calendar_overview(db, question, context)
-        if source and 0 < len(source["excerpt"].strip()) <= MAX_ANSWER_CHARS:
-            return {"items": [{"question": text, "status": "answered", "content": source["excerpt"],
-                               "citations": [source]}], "context": context, "model_mode": settings().model_mode}
+        overview = calendar_overview_answer(db, question, context)
+        if overview and len(overview["content"]) <= MAX_ANSWER_CHARS:
+            return {"items": [{"question": text, **overview}], "context": context, "model_mode": settings().model_mode}
     if TECHNICAL_LIMIT_QUESTION.search(text):
         return policy_answer(db, text, context)
     previous_branch = context.get('previous_branch')
@@ -409,7 +426,8 @@ def answer_turn(db, text, context):
     resolved_context = context
     for task in tasks:
         question, kind = task['question'], task['kind']
-        original = ''.join(question_clauses(text)[i] for i in task['clauses']) if task.get('clauses') else question
+        original = (''.join(question_clauses(text)[i] for i in task['clauses']) if task.get('clauses')
+                    else text if len(tasks) == 1 else question)
         school_name = settings().school_name
         if any((CAMPUS_SCOPE.search(value) or school_name and school_name in value)
                and (CAMPUS_FACT.search(value) or SCHOOL_PROFILE.search(value)) for value in (original, question)):
@@ -421,6 +439,11 @@ def answer_turn(db, text, context):
         scope = dict(context)
         branches = task.get('branches', [])
         branch_question = question
+        if previous_branch and kind == 'campus':
+            exact_choice = award_choice(original) or original.strip().rstrip('？?。！!')
+            if exact_choice in previous_branch['options']:
+                action, branches = 'select_previous', [exact_choice]
+        selected = []
         if previous_branch and action in ('all_previous', 'select_previous') and kind == 'campus':
             selected = (previous_branch['options'] if action == 'all_previous' else
                         [branch for branch in branches if branch in previous_branch['options']])
@@ -449,6 +472,8 @@ def answer_turn(db, text, context):
             continue
         if kind == 'campus':
             aggregate = action in ('all', 'all_previous') or action == 'select_previous' and len(branches) > 1
+            allowed_awards = scholarship_branches('、'.join(selected or branches) or original)
+            unselected = set(previous_branch['options']) - set(selected) if selected else set()
             if action == 'all':
                 awards = requested_award_amounts(f"{original} {question} {'、'.join(branches)}", explicit=True)
                 if awards:
@@ -471,7 +496,15 @@ def answer_turn(db, text, context):
                 else:
                     task_items.append(item)
                     for missing in item.get('missing_questions', []):
+                        if any(option in missing for option in unselected):
+                            continue
+                        if allowed_awards and scholarship_branches(missing) - allowed_awards:
+                            continue
+                        search_question = missing
+                        if selected and not any(option in missing for option in selected):
+                            search_question = f"仅核实{'、'.join(selected)}这个范围内的问题：{missing}"
                         gap = fill_material_gap(db, {'question': missing, 'status': 'missing_material',
+                                                     'search_question': search_question,
                                                      'content': MATERIAL_GAP, 'citations': []})
                         if aggregate:
                             gap['content'] = f"{missing.rstrip('？?。')}：{gap['content']}"

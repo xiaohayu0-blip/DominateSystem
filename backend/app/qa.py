@@ -65,6 +65,7 @@ class DeepSeekModel:
     def select_evidence(self, question: str, evidence: list[dict], *, retry: bool = False) -> dict:
         system = (
             "你为学生解答学校制度。先选能直接回答问题的最短原文，再基于所选原文用自己的话简洁回答，先给结论。"
+            "answer只输出能直接回答用户问题的内容，不写‘小八找到的相关原文’、检索过程或引导语。完整原文由出处展示。"
             "只选和问题直接相关的摘录，保留影响结论的条件与例外。适用年级有差异时，分别选取各年级对应的摘录。"
             "selections 必须保留原文，answer 用自然语言转述。不要把表头或整段原文堆进 answer。"
             "你是校园小助手‘小八’，像耐心熟悉校园事务的同学一样说话：轻松自然，先接住学生的话，再把事情讲明白。"
@@ -107,7 +108,8 @@ class DeepSeekModel:
             "题设数字只作为提问者描述的情况，不当作制度标准。不要复述无关的版本日期或段落编号。"
             "校历称呼沿用第一学期、第二学期；日期答复无需机械重复学期名，别将开课日当报到日。"
             "若只能回答部分诉求，answer保留有依据的部分，selections保留对应原文；"
-            "另用missing_questions数组列出尚无充分依据的自足问句，不把未回答的部分伪装成已回答。"
+            "另用missing_questions数组列出本轮明确询问且尚无充分依据的自足问句，保留所选分支、所问事项和年度。"
+            "不能添加用户未选的分支或没有询问的事项。"
             "金额、分值、排名门槛、办理期限等以所选原文为准。选齐能回答问题的条款，包含适用条件和例外。"
             "最后检查表达：除前述严肃事项外，answer应有自然口语开头、清楚的短段和1个表情或颜文字。"
             "不输出没有表情的公文式摘要；上述表达要求服从事实准确性，不能为幽默删改制度条件或突破字数限制。"
@@ -564,7 +566,7 @@ POLICY_FACT_UNITS = {"元", "%", "个百分点", "分", "工作日", "日", "月
 SOURCE_LINK = re.compile(r"(?:https?://|www\.)[^\s，。；）)]+", re.I)
 
 
-def source_answer(sources, budget, *, cohort_options=False, lead="小八找到的相关原文：\n"):
+def source_answer(sources, budget, *, cohort_options=False, lead=""):
     excerpts = []
     for source in sources:
         label = cohort_label(source) if cohort_options else ""
@@ -675,14 +677,15 @@ CALENDAR_OVERVIEW_LOCATION = "第1、2页 · 校历结构化 · 学年放假总�
 CALENDAR_YEAR_LOCATION_PREFIX = " · 校历结构化 · 年度放假总览 · "
 CALENDAR_OVERVIEW_QUERY = re.compile(
     r"(?:有(?:哪些|哪几个|什么)|哪[几些])(?:个)?(?:假期|节假日)|(?:哪些|哪几)假.{0,4}放|"
-    r"(?:寒暑假|寒假.{0,5}暑假|暑假.{0,5}寒假).{0,18}(?:哪[天日]|几月|什么时候|放多久|起止|时间)|"
+    r"(?:寒暑假|寒假.{0,5}暑假|暑假.{0,5}寒假).{0,18}(?:哪[天日]|几[月号日]|什么时候|啥时候|怎么放|放多久|起止|时间|安排)|"
     r"(?:本学年|这学年|该学年|学年).{0,12}(?:假期安排|放假安排)|"
     r"除了(?:寒暑假|寒假.{0,3}暑假|暑假.{0,3}寒假).{0,12}(?:别的|其他).{0,3}(?:假|节日)"
 )
 ACADEMIC_YEAR_RANGE = re.compile(r"(?<!\d)(20\d{2}|\d{2})\s*年?\s*(?:到|至|[-–—~～])\s*(20\d{2}|\d{2})\s*(?:年|学年)?(?!\d)")
 CALENDAR_SINGLE_YEAR = re.compile(r"(?<!\d)(20\d{2}|\d{2})\s*年(?!度?级|入学|\d)")
-CALENDAR_MARK = re.compile(
-    r"(中秋节|国庆节|元旦|除夕|春节|清明节|劳动节|端午节)20\d{2}年(\d{1,2}月\d{1,2}日)"
+CALENDAR_FESTIVAL_DATE = re.compile(
+    r"(中秋节|国庆节|元旦|除夕|春节|清明节|劳动节|端午节)(?:标记为|标注为|[：:]|是)?\s*"
+    r"((?:20\d{2}年)?\d{1,2}月\d{1,2}日)"
 )
 
 
@@ -707,6 +710,41 @@ def calendar_overview(db, query, context):
                 if (academic_year := re.search(r"(20\d{2})-(20\d{2})学年", chunk.text))
                 and year in academic_year.groups()]
     return citation(*rows[0]) if len(rows) == 1 else None
+
+
+def calendar_overview_answer(db, query, context):
+    source = calendar_overview(db, query, context)
+    if not source:
+        return None
+    citations = [source]
+    excerpt = source["excerpt"]
+    periods = re.findall(r"^(?:寒假|暑假)[：:].+$", excerpt, re.M)
+    single = CALENDAR_SINGLE_YEAR.search(query) if not ACADEMIC_YEAR_RANGE.search(query) else None
+    if single and len(periods) < 2:
+        year = int(single[1]) + (2000 if len(single[1]) == 2 else 0)
+        academic = calendar_overview(db, f"{year}-{year + 1}学年", context)
+        if academic and academic["document_id"] == source["document_id"]:
+            known = {line[:2] for line in periods}
+            additional = [line for line in re.findall(r"^(?:寒假|暑假)[：:].+$", academic["excerpt"], re.M)
+                          if line[:2] not in known]
+            if additional:
+                periods += ["同一学年校历列出的假期：", *additional]
+                citations.append(academic)
+        if not periods:
+            periods = [f"这份校历未列出{year}年的寒暑假日期。"]
+    only_other = bool(re.search(r"除了(?:寒暑假|寒假.{0,3}暑假|暑假.{0,3}寒假)", query))
+    only_periods = bool(re.search(r"寒暑假|寒假.{0,5}暑假|暑假.{0,5}寒假", query)) and not only_other
+    content = [] if only_other else periods
+    if not only_periods:
+        mark = re.search(r"^校历节日标记[：:](.+)$", excerpt, re.M)
+        festivals = mark[1] if mark else "、".join(name + date for name, date in CALENDAR_FESTIVAL_DATE.findall(excerpt))
+        if festivals:
+            content.extend([f"节日当天：{festivals}", "具体放假天数、调休和补课以通知为准。"])
+    if not content:
+        return None
+    prefix, historical = scope_notice(citations, context)
+    return {"status": "historical_reference" if historical else "answered",
+            "content": prefix + "\n".join(content), "citations": citations}
 
 
 ASSESSMENT_METRICS = (
@@ -825,8 +863,12 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             continue
         report_progress("searching")
         holiday_overview = bool(CALENDAR_OVERVIEW_QUERY.search(query))
-        calendar = calendar_overview(db, query, context) if holiday_overview else calendar_period(db, query, context)
-        holiday_marks = CALENDAR_MARK.findall(calendar["excerpt"]) if holiday_overview and calendar else ()
+        if holiday_overview:
+            overview = calendar_overview_answer(db, query, context)
+            if overview and len(overview["content"]) <= MAX_ANSWER_CHARS:
+                results.append({"question": part, **overview})
+                continue
+        calendar = None if holiday_overview else calendar_period(db, query, context)
         assessment_citations, assessment = assessment_sources(db, query, context)
         calculation = competition_score(db, query, context)
         catalog = competition_classification(db, part, context.get("selected_year"))
@@ -946,8 +988,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                         if calendar.get("derived_facts"):
                             model_query += "\n" + calendar["derived_facts"]
                     if holiday_overview:
-                        model_query += ("\n按用户问的年份或学年回答，并说明资料覆盖范围。逐项列出证据中的节日名称及日期，"
-                                        "并把校历明确的寒暑假区间单独说明。节日标记不能推断连休或调休。")
+                        model_query += ("\n先给有依据的寒暑假起止日期。未询问资料覆盖范围时省去范围说明。"
+                                        "节日当天、连休和调休分别说明，缺少日期时如实说明。")
                     selected = model.select_evidence(model_query, citations)
                     content, citations = cited_answer(
                         selected, citations, question=query, budget=answer_budget,
