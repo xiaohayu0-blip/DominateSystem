@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from .config import settings
 from .competition import TEAM_SIZE_REPLY, competition_score
 from .competition_catalog import competition_classification
-from .evidence_numbers import check_enumerated_counts, compact_clause, comparisons, quantities, scenario_quantities
+from .evidence_numbers import check_enumerated_counts, comparisons, normalized_numbers, quantities, scenario_quantities
 from .models import Chunk, Document, Question
 from .policy_context import clarification_for, policy_query, search_policy_evidence
 from .question_planning import grouped_questions, question_clauses
@@ -106,10 +106,7 @@ class DeepSeekModel:
             "校历称呼沿用第一学期、第二学期；日期答复无需机械重复学期名，别将开课日当报到日。"
             "若只能回答部分诉求，answer保留有依据的部分，selections保留对应原文；"
             "另用missing_questions数组列出尚无充分依据的自足问句，不把未回答的部分伪装成已回答。"
-            "只在原文同一句明确列出多个不同对象且有共同条件时，才用「这两项」之类的计数。"
-            "需额外提供enumerated_counts数组，每项含phrase（答复中完整且唯一的计数短语）、"
-            "chunk_id（所选原文片段编号）、members（按原文顺序逐字写出的完整名称）。"
-            "写明共同条件和适用时段，保留原文例外。无法指出具体名称时，直接写出有依据的内容。"
+            "金额、分值、排名门槛、办理期限等以所选原文为准。选齐能回答问题的条款，包含适用条件和例外。"
             "最后检查表达：除前述严肃事项外，answer应有自然口语开头、清楚的短段和1个表情或颜文字。"
             "不输出没有表情的公文式摘要；上述表达要求服从事实准确性，不能为幽默删改制度条件或突破字数限制。"
         )
@@ -417,8 +414,7 @@ def policy_answer_text(answer, sources):
     return text
 
 
-def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessment=None, calculation=None,
-                      holiday_marks=(), catalog_grades=(), answer_budget=MAX_ANSWER_CHARS, question=""):
+def resolve_citations(selected, citations, *, cohort_options, deepseek):
     selections = selected.get("selections") if isinstance(selected, dict) else None
     if deepseek and selections == []:
         raise MissingEvidence()
@@ -447,7 +443,13 @@ def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessme
         quotes.append(f"{label}：{quote}" if label else quote)
         if source not in valid:
             valid.append(source)
-    content = "\n\n".join(dict.fromkeys(quotes))
+    return "\n\n".join(dict.fromkeys(quotes)), valid
+
+
+def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessment=None, calculation=None,
+                      holiday_marks=(), catalog_grades=(), answer_budget=MAX_ANSWER_CHARS, question=""):
+    # Offline regression helper for the previous answer checker. Live responses use cited_answer.
+    content, valid = resolve_citations(selected, citations, cohort_options=cohort_options, deepseek=deepseek)
     if deepseek:
         answer = selected.get("answer")
         if not isinstance(answer, str) or not answer.strip():
@@ -534,6 +536,41 @@ def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessme
             raise InvalidEvidence("wrong_roster_value")
         content = answer.strip()
     return content, valid
+
+
+POLICY_FACT_QUERY = re.compile(
+    r"多少钱|金额|奖金|费用|多少元|到账|加几分|加多少分|计分|分值|前百分之|前几|排名.{0,12}(?:要求|条件)|"
+    r"截止|办理期限|有效期|几[号日月天]|多少[天日]|多久|何时|什么时候|哪[天日]|名额|比例"
+)
+POLICY_FACT_UNITS = {"元", "%", "个百分点", "分", "工作日", "日", "月", "年", "周", "天", "时", "分钟"}
+SOURCE_LINK = re.compile(r"(?:https?://|www\.)[^\s，。；）)]+", re.I)
+
+
+def source_answer(sources, budget, *, cohort_options=False, lead="小八找到的相关原文：\n"):
+    excerpts = []
+    for source in sources:
+        label = cohort_label(source) if cohort_options else ""
+        excerpt = source["excerpt"].strip()
+        excerpts.append(f"{label}：{excerpt}" if label else excerpt)
+    body = lead + "\n\n".join(dict.fromkeys(excerpts))
+    if len(body) <= budget:
+        return body
+    return "相关条款较长，点下方出处可核对完整原文和适用条件。"
+
+
+def cited_answer(selected, citations, *, question, budget, cohort_options=False, deepseek=True):
+    excerpts, sources = resolve_citations(selected, citations, cohort_options=cohort_options, deepseek=deepseek)
+    if not deepseek:
+        return excerpts, sources
+    answer = selected.get("answer")
+    if (not isinstance(answer, str) or not answer.strip() or len(answer.strip()) > budget
+            or re.search(r"<[^>]+>|!\[|\]\(", answer)
+            or not set(SOURCE_LINK.findall(answer)) <= set(SOURCE_LINK.findall(excerpts))
+            or POLICY_FACT_QUERY.search(question)
+            or re.search(r"\d+(?:个|位|人)?(?:申请)?名额", normalized_numbers(answer))
+            or any(unit in POLICY_FACT_UNITS for _, unit in quantities(policy_answer_text(answer, sources)))):
+        return source_answer(sources, budget, cohort_options=cohort_options), sources
+    return answer.strip(), sources
 
 
 def retrieval_query(part, context):
@@ -787,13 +824,18 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                             "content": calculation.clarification, "citations": [],
                             "clarification_kind": kind})
             continue
-        if calendar and isinstance(model, ExtractiveMock):
+        if calendar:
             content = calendar["excerpt"]
             if calendar.get("duration_notice"):
                 content += "\n" + calendar["duration_notice"]
-            results.append({"question": part, "status": "answered",
-                            "content": content, "citations": [calendar]})
-            continue
+            elif calendar.get("derived_facts") and re.search(r"第\d+周", query):
+                content += "\n" + calendar["derived_facts"]
+            calendar_prefix, calendar_historical = scope_notice([calendar], context)
+            content = calendar_prefix + content
+            if len(content) <= MAX_ANSWER_CHARS:
+                results.append({"question": part, "status": "historical_reference" if calendar_historical else "answered",
+                                "content": content, "citations": [calendar]})
+                continue
         special = ""
         if catalog_citations:
             citations = catalog_citations
@@ -837,13 +879,25 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
         if special == "roster_match" and re.search(r"专业成长|思想成长|考研|就业|学业", query):
             prefix += "班主任表只列出班主任，未注明具体角色。\n\n"
         answer_budget = MAX_ANSWER_CHARS - len(prefix)
+        if calculation:
+            content = f"按手册计算，参考分为{calculation.result}。\n{calculation.expression}。\n{calculation.assumptions}。"
+            if len(calculation.citations) > 1:
+                content += "负责人按实际贡献分配的例外请核对原文。"
+        elif assessment:
+            condition, rule, rating = assessment
+            content = f"按题设的「{condition}」，该单项评为「{rating}」。原文：{rule}"
+        elif catalog_grades:
+            content = source_answer(citations, answer_budget)
+        elif special == "roster_match" and all(c.get("roster_value") for c in citations):
+            content = "表中登记的信息：\n" + "\n".join(
+                f"{c['roster_field']}为{c['roster_value']}。" for c in citations)
         if re.search(r"大[一二三四]|今年入学|往年", part) and not context.get("admission_year") and not citations:
             reason = "needs_clarification"
         elif not citations and not reason:
             reason = "missing_material"
         elif not (cohort_options or calculation) and detect_conflict(citations, query):
             reason = "document_conflict"
-        if not reason:
+        if not reason and not content:
             report_progress("composing")
             try:
                 if settings().model_mode == "deepseek" and not model_budget_available(db):
@@ -861,63 +915,11 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                     if holiday_overview:
                         model_query += ("\n按用户问的年份或学年回答，并说明资料覆盖范围。逐项列出证据中的节日名称及日期，"
                                         "并把校历明确的寒暑假区间单独说明。节日标记不能推断连休或调休。")
-                    if catalog_grades:
-                        model_query += ("\n按赛事目录逐项说明赛事等级和目录版本。简称匹配多项时，区分主赛和专项赛，"
-                                        "引用所有匹配行，不把目录年份或赛事等级混用。")
-                    if assessment:
-                        condition, _, rating = assessment
-                        model_query += (f"\n题设给定的范围为「{condition}」，完全落在所选表格条目内。"
-                                        f"请组织答复，明确该单项为「{rating}」，区分题设数字和表中阈值。")
-                    if calculation:
-                        model_query += (f"\n后端已按手册核对参考分：{calculation.expression}。"
-                                        f"适用条件：{calculation.assumptions}。"
-                                        "请先给条件下的参考分。")
-                        if len(calculation.citations) > 1:
-                            model_query += ("说明计算过程和负责人按实际贡献分配的例外。"
-                                            "selections 必须同时引用含基准分和所用系数的原文。")
-                        else:
-                            model_query += "沿用表中的分值口径，并保留适用条件。"
-                    try:
-                        selected = model.select_evidence(model_query, citations)
-                        content, citations = verified_excerpts(
-                            selected, citations, cohort_options=cohort_options, deepseek=deepseek,
-                            assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
-                            catalog_grades=catalog_grades, answer_budget=answer_budget, question=query)
-                        missing_questions = selected.get("missing_questions", [])
-                    except (InvalidEvidence, MissingEvidence) as exc:
-                        if not isinstance(model, DeepSeekModel):
-                            raise
-                        logger.warning("evidence_validation_retry reason=%s chunk_ids=%s",
-                                       str(exc), [source["chunk_id"] for source in citations])
-                        retry_query = model_query + (f"\n上次校验失败原因：{exc}。"
-                            f"若超长，压缩重写至{answer_budget}字符以内；保留条件和完整句子。"
-                            "证据不足时返回空selections，不要猜测分值。")
-                        if (not (calendar or calculation or catalog_citations or assessment_citations
-                                 or special or cohort_options) and (isinstance(exc, MissingEvidence)
-                                 or str(exc) in {"unsupported_summary_quantity", "reversed_summary_condition"})):
-                            expanded, flag = search_policy_evidence(db, query, {**context, "_candidate_limit": 16})
-                            wider = [citation(chunk, doc) for chunk, doc in expanded]
-                            if (not flag and wider and scope_notice(wider, context) == (scope_prefix, historical)
-                                    and not detect_conflict(wider, query)
-                                    and {c["admission_year"] for c in wider} == {c["admission_year"] for c in citations}):
-                                citations = wider
-                        if getattr(exc, "feedback", None):
-                            retry_query += "\n" + exc.feedback
-                        selected = model.select_evidence(retry_query, citations, retry=True)
-                        original = getattr(exc, "source_fallback", None)
-                        try:
-                            content, citations = verified_excerpts(
-                                selected, citations, cohort_options=cohort_options, deepseek=True,
-                                assessment=assessment, calculation=calculation, holiday_marks=holiday_marks,
-                                catalog_grades=catalog_grades, answer_budget=answer_budget, question=query)
-                        except InvalidEvidence as retry_error:
-                            if original and retry_error.source_fallback is None:
-                                retry_error.source_fallback = original
-                            raise
-                        if original and not selected.get("enumerated_counts") and (
-                                compact_clause(original["excerpt"]) not in compact_clause(content)):
-                            raise InvalidEvidence("unverified_enumeration_rewrite", source_fallback=original)
-                        missing_questions = selected.get("missing_questions", [])
+                    selected = model.select_evidence(model_query, citations)
+                    content, citations = cited_answer(
+                        selected, citations, question=query, budget=answer_budget,
+                        cohort_options=cohort_options, deepseek=deepseek)
+                    missing_questions = selected.get("missing_questions", [])
                 finally:
                     semaphore.release()
             except MissingEvidence:
@@ -928,15 +930,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                 logger.warning("evidence_validation_failed type=%s reason=%s chunk_ids=%s",
                                type(exc).__name__, str(exc) if isinstance(exc, InvalidEvidence) else "invalid_shape",
                                [source["chunk_id"] for source in citations])
-                source = getattr(exc, "source_fallback", None)
-                quote = source["excerpt"].strip() if source else ""
-                lead = "这条规定的原文是：\n"
-                if quote and len(lead + quote) <= answer_budget and not (
-                        calendar or calculation or assessment or catalog_grades or cohort_options or special):
-                    content, citations = lead + quote, [source]
-                    logger.info("evidence_quote_fallback chunk_id=%s", source["chunk_id"])
-                else:
-                    reason = "validation_failed"
+                reason = "validation_failed"
         if not reason:
             content = prefix + content
             if historical:

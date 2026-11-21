@@ -83,7 +83,7 @@ def test_count_grounding_keeps_scope_conditions_exceptions_and_full_enumeration(
         verified_excerpts(selected, sources, cohort_options=False, deepseek=True)
 
 
-def test_failed_count_rewrite_displays_complete_cited_clause(client, monkeypatch):
+def test_deadline_uses_complete_cited_clause_without_retry(client, monkeypatch):
     signup(client, student())
     original = "申请表与成绩单均须在三个工作日内提交。若系统故障，可向学院申请人工审核。"
     doc_id = publish("奖学金材料提交办法", original)
@@ -92,8 +92,6 @@ def test_failed_count_rewrite_displays_complete_cited_clause(client, monkeypatch
 
     def wrong_count(_, query, candidates, *, retry=False):
         attempts.append(retry)
-        if retry:
-            assert "对象全称" in query
         return {"answer": "这两项都须在5个工作日内提交。",
                 "selections": [{"chunk_id": candidates[0]["chunk_id"], "quote": original}],
                 "enumerated_counts": [{"phrase": "这两项", "chunk_id": candidates[0]["chunk_id"],
@@ -101,12 +99,12 @@ def test_failed_count_rewrite_displays_complete_cited_clause(client, monkeypatch
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", wrong_count)
     item, = ask(client, "奖学金申请材料要在几天内提交？")["answer"]["items"]
-    assert attempts == [False, True]
+    assert attempts == [False]
     assert item["status"] == "answered" and original in item["content"]
     assert "5个工作日" not in item["content"] and item["citations"][0]["document_id"] == doc_id
 
 
-def test_rewrite_without_counter_cannot_promote_an_exception_to_general_rule(client, monkeypatch):
+def test_deadline_keeps_exception_and_general_rule_separate(client, monkeypatch):
     signup(client, student())
     original = "申请表与成绩单均须在三个工作日内提交。若系统故障，可在五个工作日内补交。"
     publish("奖学金材料提交办法", original)
@@ -174,7 +172,7 @@ def test_procedure_retrieval_keeps_all_steps_and_chinese_days_pass_validation(cl
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "国家励志奖学金的评审程序有哪些?")["answer"]["items"][0]
-    assert item["status"] == "answered" and item["content"] == summary
+    assert item["status"] == "answered" and all(step in item["content"] for step in steps)
     assert len(item["citations"]) == 6 and calls == [False]
 
 
@@ -288,7 +286,7 @@ def test_real_dorm_leader_outputs_keep_score_range_and_conditions(index):
     assert "0.5—1分" in content and "不足4人" in content and "累计加分" in content
 
 
-def test_quantity_retry_identifies_number_missing_from_selected_excerpt(client, monkeypatch):
+def test_direct_source_keeps_number_outside_the_selected_excerpt(client, monkeypatch):
     signup(client, student())
     quote = "合成测试寝室长规则：按工作表现认定加分。考核合格加2分。"
     publish("合成测试寝室长加分", quote)
@@ -297,13 +295,10 @@ def test_quantity_retry_identifies_number_missing_from_selected_excerpt(client, 
 
     def model_answer(_, query, evidence, *, retry=False):
         calls.append(retry)
-        if retry:
-            assert "2分" in query and "同值同单位" in query
-            assert "不得换用其他数字" in query
         return {"answer": "考核合格加2分。", "selections": [{"chunk_id": evidence[0]["chunk_id"],
                 "quote": quote if retry else "合成测试寝室长规则：按工作表现认定加分。"}]}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "寝室长考核合格加几分")["answer"]["items"][0]
-    assert calls == [False, True] and item["status"] == "answered"
+    assert calls == [False] and item["status"] == "answered"
     assert "2分" in item["content"] and quote in item["citations"][0]["excerpt"]

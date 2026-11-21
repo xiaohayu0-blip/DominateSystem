@@ -190,7 +190,7 @@ def test_official_search_falls_back_to_school_pages(monkeypatch):
     assert any('成绩单' in s['excerpt'] for s in sources)
 
 
-def test_web_answer_keeps_real_links_and_rejects_wrong_numbers(monkeypatch):
+def test_web_answer_uses_supported_source_numbers_and_keeps_links(monkeypatch):
     plan(monkeypatch, [{'question': '最新发布', 'kind': 'web'}])
     url = 'https://example.org/news'
     message = {
@@ -206,7 +206,8 @@ def test_web_answer_keeps_real_links_and_rejects_wrong_numbers(monkeypatch):
         assert answer['items'][0]['web_sources'][0]['url'] == url
         message['content'] = '开放30个申请名额，仅限大二学生。'
         failed = chat.answer_turn(db, '最新发布', {})
-        assert failed['items'][0]['status'] == 'web_unavailable'
+        assert failed['items'][0]['status'] == 'web_answer'
+        assert '3个申请名额' in failed['items'][0]['content'] and '30个' not in failed['items'][0]['content']
 
 
 def test_general_answer_rewrites_over_limit_and_does_not_truncate(monkeypatch):

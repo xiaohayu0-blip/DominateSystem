@@ -151,6 +151,47 @@ def test_national_scholarship_dual_ranking_requirements_quote_complete_rule(clie
     assert item['citations'][0]['document_id'] == doc_id
 
 
+def test_policy_amount_uses_original_excerpt_without_a_second_model_call(client, monkeypatch):
+    from app.qa import DeepSeekModel
+
+    signup(client, student())
+    rule = '特殊课程补贴为每人每年600元。休学期间不发放。'
+    doc_id = publish('特殊课程补贴规定', rule)
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    calls = []
+
+    def single_reply(_, query, evidence, *, retry=False):
+        calls.append(retry)
+        return {'answer': '小八查到啦，补贴为800元。',
+                'selections': [{'chunk_id': evidence[0]['chunk_id'], 'quote': '模型改写过的摘录'}]}
+
+    monkeypatch.setattr(DeepSeekModel, 'select_evidence', single_reply)
+    item, = ask(client, '特殊课程补贴有多少钱？')['answer']['items']
+    assert calls == [False] and item['status'] == 'answered'
+    assert rule in item['content'] and '800元' not in item['content']
+    assert item['citations'][0]['document_id'] == doc_id
+
+
+def test_explanation_with_a_natural_count_is_not_rejected(client, monkeypatch):
+    from app.qa import DeepSeekModel
+
+    signup(client, student())
+    rule = '申诉可提交申请表与说明函。'
+    publish('学生申诉材料办法', rule)
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    answer = '小八找到啦，申诉可交两项材料：申请表和说明函 😊'
+    calls = []
+
+    def single_reply(_, query, evidence, *, retry=False):
+        calls.append(retry)
+        return {'answer': answer, 'selections': [{'chunk_id': evidence[0]['chunk_id'], 'quote': rule}]}
+
+    monkeypatch.setattr(DeepSeekModel, 'select_evidence', single_reply)
+    item, = ask(client, '学生申诉需要准备哪些材料？')['answer']['items']
+    assert calls == [False] and item['status'] == 'answered'
+    assert item['content'] == answer and item['citations']
+
+
 def test_examples_can_be_answered_and_are_withdrawn_when_source_is_disabled(admin_client, monkeypatch):
     client = admin_client
     assert signup(client, student()).status_code == 200

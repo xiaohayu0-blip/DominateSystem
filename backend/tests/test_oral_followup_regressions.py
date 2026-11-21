@@ -179,7 +179,7 @@ def test_calendar_first_week_uses_a_verified_start_and_program_derived_end():
         assert (Decimal(28), "日") in quantities(result["derived_facts"])
 
 
-def test_roster_model_must_use_requested_column_and_retry_a_different_teacher(monkeypatch):
+def test_roster_uses_requested_column_without_model(monkeypatch):
     from app.config import settings
     from app.qa import DeepSeekModel
 
@@ -201,6 +201,6 @@ def test_roster_model_must_use_requested_column_and_retry_a_different_teacher(mo
             ("工作表 Sheet1 第2行", "| 2026级 | 测试辅导员 | 会计12601 | 测试班主任 | 讲师 |"),
         ], original_name="班主任统计表.xlsx")
         item = answer_question(db, "会计12601的班主任是谁", CONTEXT)["items"][0]
-        assert attempts == [False, True]
+        assert attempts == []
         assert item["status"] == "answered" and "测试班主任" in item["content"]
 

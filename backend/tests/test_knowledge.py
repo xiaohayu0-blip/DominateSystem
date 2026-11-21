@@ -250,7 +250,7 @@ def test_model_error_and_invalid_reference_not_missing(client, monkeypatch):
 @pytest.mark.parametrize("question", [
     "专业排名第一,德育分加多少分?", "专业第一能加多少德育分？", "学习成绩排第一，德育加分怎么算？",
 ])
-def test_retry_abstention_is_missing_material_not_validation_failure(client, monkeypatch, caplog, question):
+def test_no_selected_clause_is_missing_material_without_retry(client, monkeypatch, caplog, question):
     signup(client, student())
     quote = "德育素质评价成绩=德育素质积分（15 分）-扣分项。"
     publish("专业排名与德育素质评价说明", quote, year=2026)
@@ -261,41 +261,32 @@ def test_retry_abstention_is_missing_material_not_validation_failure(client, mon
     def model_answer(_, query, evidence, *, retry=False):
         calls.append(retry)
         assert evidence and all("打分表" not in source["title"] for source in evidence)
-        if retry:
-            assert "unsupported_summary_quantity" in query
-            return {"answer": "现有资料没有该加分条款。", "selections": []}
-        return {"answer": "专业排名第一加0分。", "selections": [
-            {"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
+        return {"answer": "现有资料没有该加分条款。", "selections": []}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, question, business_year=2026)["answer"]["items"][0]
-    assert calls == [False, True]
+    assert calls == [False]
     assert item["status"] == "missing_material" and not item["citations"]
     assert "未通过校验" not in item["content"] and "0分" not in item["content"]
-    assert "evidence_validation_retry reason=unsupported_summary_quantity" in caplog.text
     assert "evidence_validation_failed" not in caplog.text
     assert question not in caplog.text
 
 
-@pytest.mark.parametrize("retry_valid", [False, True])
-def test_retry_validation_preserves_number_checks_and_logs_reason(client, monkeypatch, caplog, retry_valid):
+@pytest.mark.parametrize("generated_score", [15, 50])
+def test_score_is_displayed_from_source(client, monkeypatch, generated_score):
     signup(client, student())
     quote = "德育素质积分基准为15分。"
     publish("德育评分办法", quote)
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
 
     def model_answer(_, query, evidence, *, retry=False):
-        return {"answer": "德育素质积分基准为15分。" if retry and retry_valid else "德育素质积分基准为50分。",
+        return {"answer": f"德育素质积分基准为{generated_score}分。",
                 "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "德育素质积分基准多少分？")["answer"]["items"][0]
-    assert item["status"] == ("answered" if retry_valid else "validation_failed")
-    if retry_valid:
-        assert "15分" in item["content"] and item["citations"]
-    else:
-        assert not item["citations"]
-        assert "evidence_validation_failed type=InvalidEvidence reason=unsupported_summary_quantity" in caplog.text
+    assert item["status"] == "answered" and item["citations"]
+    assert "15分" in item["content"] and "50分" not in item["content"]
 
 
 def test_deepseek_summarizes_verified_excerpts_without_inventing_numbers(client, monkeypatch):
@@ -317,22 +308,22 @@ def test_deepseek_summarizes_verified_excerpts_without_inventing_numbers(client,
     summary = correct_summary
     recover_on_retry = False
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["content"] == correct_summary
+    assert original in item["content"]
     assert item["citations"][0]["excerpt"] == original
 
     selected_quote = quote.replace("0.3", "0.5")
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "answered" and item["content"] == correct_summary
+    assert item["status"] == "answered" and original in item["content"]
     assert item["citations"][0]["excerpt"] == original
 
     selected_quote = quote
     summary = correct_summary.replace("0.3", "0.5")
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "validation_failed" and not item["citations"]
+    assert item["status"] == "answered" and original in item["content"] and "0.5分" not in item["content"]
 
     recover_on_retry = True
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "answered" and item["content"] == correct_summary and item["citations"]
+    assert item["status"] == "answered" and original in item["content"] and item["citations"]
 
 
 def test_assessment_distinguishes_question_percentage_from_policy_threshold(client, monkeypatch):
@@ -344,20 +335,13 @@ def test_assessment_distinguishes_question_percentage_from_policy_threshold(clie
         chunk.location = "第5页 · 班主任考核结构化 · 大四 · 就业率"
         db.commit()
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
-    summary = "如果大四就业率低于25%，该单项评为不合格。表里的界线是低于85%。"
-
-    def model_answer(_, question, evidence, *, retry=False):
-        assert "该单项为「不合格」" in question
-        assert evidence[0]["excerpt"] == rule
-        return {"answer": summary, "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": rule}]}
-
-    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    def unexpected(*args, **kwargs):
+        pytest.fail("结构化考核结论不需要模型改写")
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", unexpected)
     question = "大四的就业率低于25%，班主任考核评为什么？"
     item = ask(client, question)["answer"]["items"][0]
-    assert item["status"] == "answered" and item["content"] == summary and item["citations"]
-    summary = summary.replace("不合格", "优秀")
-    item = ask(client, question)["answer"]["items"][0]
-    assert item["status"] == "validation_failed" and not item["citations"]
+    assert item["status"] == "answered" and "25%" in item["content"] and "85%" in item["content"] and item["citations"]
+    assert "不合格" in item["content"] and item["citations"][0]["excerpt"] == rule
 
 
 def test_competition_score_uses_two_verified_tables(client, monkeypatch):
@@ -375,26 +359,15 @@ def test_competition_score_uses_two_verified_tables(client, monkeypatch):
                    for location, text in [(BASE_LOCATION, base), (TEAM_LOCATION, team)])
         db.commit()
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
-    summary = "如果第一名认定为一等奖或同级奖，按表分配，参考分为45分×0.075＝3.375分。"
-    omit_team = False
-
-    def model_answer(_, question, evidence, *, retry=False):
-        assert "45分 × 0.075 = 3.375分" in question
-        selections = [{"chunk_id": source["chunk_id"], "quote": quote}
-                      for source, quote in zip(evidence, (base, team), strict=True)]
-        return {"answer": summary, "selections": selections[:1] if omit_team else selections}
-
-    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
+    def unexpected(*args, **kwargs):
+        pytest.fail("已经计算好的参考分不需要模型改写")
+    monkeypatch.setattr(DeepSeekModel, "select_evidence", unexpected)
     question = "2026年国家级a类赛事第一名,团队里面第六名,加多少分"
     item = ask(client, question)["answer"]["items"][0]
-    assert item["status"] == "answered" and item["content"] == summary and len(item["citations"]) == 2
-    omit_team = True
-    item = ask(client, question)["answer"]["items"][0]
-    assert item["status"] == "validation_failed"
-    omit_team = False
-    summary = summary.replace("3.375分", "4分")
-    item = ask(client, question)["answer"]["items"][0]
-    assert item["status"] == "validation_failed"
+    assert item["status"] == "answered" and "3.375分" in item["content"] and len(item["citations"]) == 2
+    assert "45分 × 0.075 = 3.375分" in item["content"]
+    excerpts = [source["excerpt"] for source in item["citations"]]
+    assert base in excerpts and any(team in excerpt for excerpt in excerpts)
 
 
 def test_competition_second_place_can_follow_up_with_team_size(client, monkeypatch):
@@ -471,7 +444,7 @@ def test_calendar_holiday_overview_keeps_linked_date_question(client, monkeypatc
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     result = ask(client, "26年到27年有哪些假可以放?分别是从几月几号休到几月几号?")["answer"]["items"]
-    assert len(result) == 1 and result[0]["status"] == "answered" and result[0]["content"] == answer
+    assert len(result) == 1 and result[0]["status"] == "answered" and "2027年1月18日" in result[0]["content"] and "2027年8月29日" in result[0]["content"]
     missing = ask(client, "27年到28年有哪些假可以放？")["answer"]["items"][0]
     assert missing["status"] == "missing_material" and not missing["citations"]
 
@@ -499,7 +472,7 @@ def test_calendar_single_year_lists_festival_marks(client, monkeypatch):
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "26年有哪些假可以放？分别从几月几号休到几月几号？")["answer"]["items"][0]
     assert item["status"] == "answered" and "中秋节" in item["content"] and "国庆节" in item["content"]
-    assert calls == [False, True]
+    assert calls == []
 
 
 def test_competition_catalog_distinguishes_main_and_special_tracks(client, monkeypatch):
@@ -835,7 +808,7 @@ def test_annual_holiday_question_uses_published_year_excerpt(monkeypatch):
                 assert item["citations"][0]["chunk_id"] == chunk.id
 
 
-def test_missing_policy_evidence_expands_candidates_and_validates_retry(monkeypatch):
+def test_missing_policy_evidence_is_reported_without_retry(monkeypatch):
     from app import qa
 
     doc_id = publish("请假规定", "请假需要提交申请表。")
@@ -857,6 +830,6 @@ def test_missing_policy_evidence_expands_candidates_and_validates_retry(monkeypa
         monkeypatch.setattr(qa, "search_policy_evidence", search)
         monkeypatch.setattr(DeepSeekModel, "select_evidence", select_evidence)
         result = qa.answer_question(db, "请假需要什么材料", {"business_year": 2026})
-        assert limits == [8, 16]
-        assert result["items"][0]["status"] == "answered"
-        assert result["items"][0]["citations"][0]["document_id"] == doc_id
+        assert limits == [8]
+        assert result["items"][0]["status"] == "missing_material"
+        assert not result["items"][0]["citations"]

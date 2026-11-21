@@ -54,7 +54,7 @@ def test_other_scopes_remain_retrievable(year, grade, start, end):
 
 
 @pytest.mark.parametrize("year", [None, 2024])
-def test_model_rewrites_overlong_reply_before_sending_with_scope_prefix(client, monkeypatch, year):
+def test_overlong_reply_uses_original_with_scope_prefix(client, monkeypatch, year):
     signup(client, student())
     quote = "奖学金申请需要申请表，按学院通知办理。"
     publish("奖学金申请材料", quote, year=year)
@@ -63,14 +63,12 @@ def test_model_rewrites_overlong_reply_before_sending_with_scope_prefix(client, 
 
     def model_answer(_, query, evidence, *, retry=False):
         calls.append(retry)
-        if retry:
-            assert "summary_too_long" in query and "压缩重写" in query
-        return {"answer": quote if retry else quote * 30,
+        return {"answer": quote * 30,
                 "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "奖学金申请材料")["answer"]["items"][0]
-    assert calls == [False, True] and item["status"] in {"answered", "historical_reference"}
+    assert calls == [False] and item["status"] in {"answered", "historical_reference"}
     assert len(item["content"]) <= 500 and item["content"].endswith(quote)
 
 
@@ -87,7 +85,7 @@ def test_long_evidence_and_original_links_are_allowed_with_short_answer(client, 
 
 
 @pytest.mark.parametrize("length", [500, 501])
-def test_exact_length_boundary_rewrites_only_when_over_limit(client, monkeypatch, length):
+def test_exact_length_boundary_without_model_retry(client, monkeypatch, length):
     signup(client, student())
     quote = "奖学金申请需要申请表，同一项目不重复计分。"
     publish("奖学金申请", quote)
@@ -101,12 +99,12 @@ def test_exact_length_boundary_rewrites_only_when_over_limit(client, monkeypatch
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "奖学金申请")["answer"]["items"][0]
-    assert calls == ([False] if length == 500 else [False, True])
+    assert calls == [False]
     assert item["status"] == "answered" and len(item["content"]) <= 500
     assert "同一项目不重复计分" in item["content"]
 
 
-def test_repeated_overlong_model_output_is_not_sent(client, monkeypatch):
+def test_overlong_model_output_is_replaced_with_original(client, monkeypatch):
     signup(client, student())
     quote = "奖学金申请需要申请表，同一项目不重复计分。"
     publish("奖学金申请", quote)
@@ -119,5 +117,5 @@ def test_repeated_overlong_model_output_is_not_sent(client, monkeypatch):
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "奖学金申请")["answer"]["items"][0]
-    assert calls == [False, True] and len(item["content"]) <= 500
-    assert item["status"] == "validation_failed" and quote * 40 not in item["content"]
+    assert calls == [False] and len(item["content"]) <= 500
+    assert item["status"] == "answered" and item["content"].endswith(quote)
