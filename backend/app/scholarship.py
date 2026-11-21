@@ -78,7 +78,7 @@ def matching_clause(text, kind, award):
             and re.search(r"奖励标准|奖金|每生每年|每人每年|元/学年/人", text))
 
 
-def scholarship_lookup(db, request, context, max_chars, *, compact=False):
+def scholarship_lookup(db, request, context, *, compact=False):
     kind, award = request
     if award is None:
         return {"status": "needs_clarification", "content": AWARD_CHOICES, "citations": [],
@@ -103,13 +103,12 @@ def scholarship_lookup(db, request, context, max_chars, *, compact=False):
         prefix = f"按{year}年版《{document.title.rsplit('.', 1)[0]}》：\n" if document.business_year else ""
         if compact and prefix:
             prefix = f"按{year}年版，"
-        if compact and len(prefix + text) > max_chars:
+        if compact:
             clauses = [sentence.strip() for sentence in re.split(r"(?<=[。！？])|\n", chunk.text)
                        if matching_clause(sentence, kind, award)]
             if len(clauses) == 1:
                 text = clauses[0]
-        if len(prefix + text) <= max_chars:
-            candidates.append((document.business_year == year, prefix + text, chunk, document))
+        candidates.append((document.business_year == year, prefix + text, chunk, document))
     if candidates:
         best = max(row[0] for row in candidates)
         tied = {text: (chunk, doc) for exact, text, chunk, doc in candidates if exact == best}

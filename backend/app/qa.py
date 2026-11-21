@@ -24,7 +24,6 @@ from .scholarship import AWARD_NAMES, award_choice, scholarship_lookup, scholars
 from .retrieval import DATED_BATCH_DEADLINE, GENERIC, citation, normalize_roster_query, sheet_key, terms
 from .schemas import scrub
 
-MAX_ANSWER_CHARS = 500
 logger = logging.getLogger(__name__)
 
 TECHNICAL_LIMIT_QUESTION = re.compile(
@@ -88,7 +87,7 @@ class DeepSeekModel:
             "只保留影响结论的条件、例外和单位，共同规则只说一次。查不到依据的小类逐项列入missing_questions。"
             "问多个奖学金的金额时，每项一行，只写奖学金名称、金额、单位及影响金额的等级或适用年度。"
             "仅提到奖学金名称、评选条件或名额的资料无法证明金额。把缺金额的奖学金逐项列入missing_questions，以便联网查证。"
-            "明确指出哪一项暂无依据。500字符是上限，简单问题能一句说清就一句。"
+            "明确指出哪一项暂无依据。能用一句话说清就只写一句，省去开头、总结、背景和重复解释。"
             "答复按原意核对，允许同义词、语序变化、中文与阿拉伯数字互换，无需逐字复述。"
             "发送前自查数值、单位、条件、否定和例外的含义是否一致，不因表达方式不同而拒答。"
             "保留原文的数值、单位、适用条件和例外；单项等级不能当成总评分。"
@@ -99,7 +98,6 @@ class DeepSeekModel:
             "提供的资料均可向学生展示，不因个人记录、实时安排、联系方式或资格核对等主题拒答。"
             "可以依据资料解释资格条件、核对题设及给出参考计算，不宣称已完成现实中的审批或操作。"
             "年度、年级和有效期不同的资料要标明适用范围，不将历史依据当成现行规定。"
-            f"发送前必须先整合答复，确保answer不超过{MAX_ANSWER_CHARS}字符；删去重复解释，保留关键条件、数值和例外。"
             "不得编造资料没有的事实。输出JSON对象："
             '{"answer":"直接回答问题的简短说明","selections":[{"chunk_id":"已给出的ID","start_line":1,"end_line":2}]}。'
             "行号从1开始，起止均包含。只需一行时起止相同。如单行过长，可以改用 quote 字段提供逐字原文短摘录。"
@@ -115,13 +113,13 @@ class DeepSeekModel:
             "不能添加用户未选的分支或没有询问的事项。"
             "金额、分值、排名门槛、办理期限等以所选原文为准。选齐能回答问题的条款，包含适用条件和例外。"
             "最后检查表达：除前述严肃事项外，answer应有自然口语开头、清楚的短段和1个表情或颜文字。"
-            "不输出没有表情的公文式摘要；上述表达要求服从事实准确性，不能为幽默删改制度条件或突破字数限制。"
+            "不输出没有表情的公文式摘要；上述表达要求服从事实准确性，不能为幽默删改制度条件。"
         )
         if retry:
             system += ("上一次输出未通过校验。请重新选取必要原文，核对 answer 的数值和单位都出现在所选摘录中。"
                        "若并列对象的计数无法证实，直接写出原文里的对象名称，不说有几项。"
                        "优先使用给定的片段 ID 和准确行号，整行太长时用 quote 逐字复制必要原文。"
-                       f"如答复超长，先压缩重写到{MAX_ANSWER_CHARS}字符以内，保留必要条件，不截断句子。")
+                       "只写结论和必要条件，引用另行提供。")
         numbered = [{**source, "lines": dict(enumerate(source["excerpt"].split("\n"), 1))}
                     for source in evidence]
         return self.request_json(system, {"question": scrub(question), "untrusted_evidence": numbered})
@@ -470,14 +468,14 @@ def resolve_citations(selected, citations, *, cohort_options, deepseek):
 
 
 def verified_excerpts(selected, citations, *, cohort_options, deepseek, assessment=None, calculation=None,
-                      holiday_marks=(), catalog_grades=(), answer_budget=MAX_ANSWER_CHARS, question=""):
+                      holiday_marks=(), catalog_grades=(), answer_budget=None, question=""):
     # Offline regression helper for the previous answer checker. Live responses use cited_answer.
     content, valid = resolve_citations(selected, citations, cohort_options=cohort_options, deepseek=deepseek)
     if deepseek:
         answer = selected.get("answer")
         if not isinstance(answer, str) or not answer.strip():
             raise InvalidEvidence("missing_or_invalid_summary")
-        if len(answer.strip()) > answer_budget:
+        if answer_budget is not None and len(answer.strip()) > answer_budget:
             raise InvalidEvidence("summary_too_long")
         if re.search(r"<[^>]+>|!\[|\]\(", answer, re.IGNORECASE):
             raise InvalidEvidence("summary_contains_link_or_markup")
@@ -567,43 +565,29 @@ POLICY_FACT_QUERY = re.compile(
 )
 POLICY_FACT_UNITS = {"元", "%", "个百分点", "分", "工作日", "日", "月", "年", "周", "天", "时", "分钟"}
 SOURCE_LINK = re.compile(r"(?:https?://|www\.)[^\s，。；）)]+", re.I)
-LONG_SOURCE_NOTICE = "相关条款较长，点下方出处可核对完整原文和适用条件。"
 
 
-def source_answer(sources, budget, *, cohort_options=False, lead=""):
+def source_answer(sources, *, cohort_options=False):
     excerpts = []
     for source in sources:
         label = cohort_label(source) if cohort_options else ""
         excerpt = source["excerpt"].strip()
         excerpts.append(f"{label}：{excerpt}" if label else excerpt)
-    body = lead + "\n\n".join(dict.fromkeys(excerpts))
-    if len(body) <= budget:
-        return body
-    return LONG_SOURCE_NOTICE
+    return "\n\n".join(dict.fromkeys(excerpts))
 
 
-def cited_answer(selected, citations, *, question, budget, cohort_options=False, deepseek=True, aggregate=False):
+def cited_answer(selected, citations, *, question, cohort_options=False, deepseek=True):
     excerpts, sources = resolve_citations(selected, citations, cohort_options=cohort_options, deepseek=deepseek)
     if not deepseek:
         return excerpts, sources
     answer = selected.get("answer")
-    if (not isinstance(answer, str) or not answer.strip() or len(answer.strip()) > budget
-            or re.search(r"<[^>]+>|!\[|\]\(", answer)
-            or not set(SOURCE_LINK.findall(answer)) <= set(SOURCE_LINK.findall(excerpts))
-            or POLICY_FACT_QUERY.search(question)
+    if (not isinstance(answer, str) or not answer.strip() or re.search(r"<[^>]+>|!\[|\]\(", answer)
+            or not set(SOURCE_LINK.findall(answer)) <= set(SOURCE_LINK.findall(excerpts))):
+        raise InvalidEvidence("invalid_model_answer")
+    if (POLICY_FACT_QUERY.search(question)
             or re.search(r"\d+(?:个|位|人)?(?:申请)?名额", normalized_numbers(answer))
             or any(unit in POLICY_FACT_UNITS for _, unit in quantities(policy_answer_text(answer, sources)))):
-        fallback = source_answer(sources, budget, cohort_options=cohort_options)
-        if aggregate or fallback == LONG_SOURCE_NOTICE:
-            try:
-                return verified_excerpts(selected, citations, cohort_options=cohort_options, deepseek=True,
-                                         answer_budget=budget, question=question)
-            except InvalidEvidence:
-                if 0 < len(excerpts) <= budget:
-                    return excerpts, sources
-                if aggregate:
-                    raise MissingEvidence()
-        return fallback, sources
+        return verified_excerpts(selected, citations, cohort_options=cohort_options, deepseek=True, question=question)
     return answer.strip(), sources
 
 
@@ -866,21 +850,21 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             results.append({"question": part, "status": "needs_clarification", "content": prompt, "citations": []})
             continue
         if (request := scholarship_request(query)) and (
-                rule := scholarship_lookup(db, request, context, MAX_ANSWER_CHARS)):
-            results.append({"question": part, **rule})
+                rule := scholarship_lookup(db, request, context)):
+            results.append({"question": part, **rule, "_compose": True})
             continue
         ranking = ranking_answer(db, query, context)
         if ranking:
             report_progress("checking")
             report_progress("composing")
-            results.append({"question": part, **ranking})
+            results.append({"question": part, **ranking, "_compose": True})
             continue
         report_progress("searching")
         holiday_overview = bool(CALENDAR_OVERVIEW_QUERY.search(query))
         if holiday_overview:
             overview = calendar_overview_answer(db, query, context)
-            if overview and len(overview["content"]) <= MAX_ANSWER_CHARS:
-                results.append({"question": part, **overview})
+            if overview:
+                results.append({"question": part, **overview, "_compose": True})
                 continue
         calendar = None if holiday_overview else calendar_period(db, query, context)
         assessment_citations, assessment = assessment_sources(db, query, context)
@@ -906,10 +890,9 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                 content += "\n" + calendar["derived_facts"]
             calendar_prefix, calendar_historical = scope_notice([calendar], context)
             content = calendar_prefix + content
-            if len(content) <= MAX_ANSWER_CHARS:
-                results.append({"question": part, "status": "historical_reference" if calendar_historical else "answered",
-                                "content": content, "citations": [calendar]})
-                continue
+            results.append({"question": part, "status": "historical_reference" if calendar_historical else "answered",
+                            "content": content, "citations": [calendar], "_compose": True})
+            continue
         special = ""
         if catalog_citations:
             citations = catalog_citations
@@ -967,7 +950,6 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
         prefix = (catalog_note + "\n\n" if catalog_note else "") + scope_prefix
         if special == "roster_match" and re.search(r"专业成长|思想成长|考研|就业|学业", query):
             prefix += "班主任表只列出班主任，未注明具体角色。\n\n"
-        answer_budget = (175 if context.get("_aggregate_branches") else MAX_ANSWER_CHARS) - len(prefix)
         if calculation:
             content = f"按手册计算，参考分为{calculation.result}。\n{calculation.expression}。\n{calculation.assumptions}。"
             if len(calculation.citations) > 1:
@@ -976,7 +958,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             condition, rule, rating = assessment
             content = f"按题设的「{condition}」，该单项评为「{rating}」。原文：{rule}"
         elif catalog_grades:
-            content = source_answer(citations, answer_budget)
+            content = source_answer(citations)
         elif special == "roster_match" and all(c.get("roster_value") for c in citations):
             content = "表中登记的信息：\n" + "\n".join(
                 f"{c['roster_field']}为{c['roster_value']}。" for c in citations)
@@ -986,6 +968,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             reason = "missing_material"
         elif not (cohort_options or calculation or len(context.get("_branch_options", [])) > 1) and detect_conflict(citations, query):
             reason = "document_conflict"
+        needs_composition = bool(content)
         if not reason and not content:
             report_progress("composing")
             try:
@@ -995,7 +978,9 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                     raise ModelFailure("concurrency_limit")
                 try:
                     deepseek = isinstance(model, DeepSeekModel)
-                    model_query = scrub(query) + f"\n请先整合正文，answer最多{answer_budget}字符，保留关键条件和例外。"
+                    model_query = scrub(query)
+                    if prefix:
+                        model_query += "\n适用范围以以下核实信息为准，必要时用一句话说明：" + prefix
                     if calendar and not holiday_overview:
                         model_query += ("\n使用校历原有的第一学期、第二学期等称呼。"
                                         "区分备注写明的开课日和按周次表整理的覆盖范围。")
@@ -1005,10 +990,15 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                         model_query += ("\n先给有依据的寒暑假起止日期。未询问资料覆盖范围时省去范围说明。"
                                         "节日当天、连休和调休分别说明，缺少日期时如实说明。")
                     selected = model.select_evidence(model_query, citations)
-                    content, citations = cited_answer(
-                        selected, citations, question=query, budget=answer_budget,
-                        cohort_options=cohort_options, deepseek=deepseek,
-                        aggregate=bool(context.get("_aggregate_branches")))
+                    try:
+                        content, citations = cited_answer(selected, citations, question=query,
+                                                          cohort_options=cohort_options, deepseek=deepseek)
+                    except InvalidEvidence:
+                        if not deepseek:
+                            raise
+                        selected = model.select_evidence(model_query, citations, retry=True)
+                        content, citations = cited_answer(selected, citations, question=query,
+                                                          cohort_options=cohort_options, deepseek=True)
                     missing_questions = selected.get("missing_questions", [])
                 finally:
                     semaphore.release()
@@ -1022,7 +1012,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                                [source["chunk_id"] for source in citations])
                 reason = "validation_failed"
         if not reason:
-            content = prefix + content
+            if needs_composition or isinstance(model, ExtractiveMock):
+                content = prefix + content
             if historical:
                 reason = "historical_reference"
         content = MESSAGES.get(reason, content) if reason else content
@@ -1034,17 +1025,11 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             if reference:
                 content, displayed_citations = reference
                 reason = "historical_reference"
+                needs_composition = True
         results.append({"question": part, "status": reason or "answered", "content": content,
-                        "citations": displayed_citations,
+                        "citations": displayed_citations, "_compose": needs_composition,
                         "missing_questions": [q for q in missing_questions[:4] if isinstance(q, str) and 0 < len(q) <= 2000]
                         if isinstance(missing_questions, list) and not reason else []})
-    for item in results:
-        if len(item["content"]) > MAX_ANSWER_CHARS:
-            logger.warning("answer_length_guard chars=%s", len(item["content"]))
-            item["status"] = "system_error"
-            item["content"] = "答复暂未能整理到500字以内，请重试。"
-            if item["citations"]:
-                item["content"] += "可先查看下方资料出处。"
     return {"items": results, "context": context, "model_mode": settings().model_mode,
             "notice": "以下为制度原文依据，不能替代学院审核；模拟回答使用检索原文，不代表真实业务结论。"
             if settings().model_mode == "mock" else "依据自动筛选，可能遗漏或误判，请核对原文及适用条件。"}

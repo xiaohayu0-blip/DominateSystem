@@ -23,7 +23,7 @@ def test_live_adapter_requests_friendly_style_without_weakening_policy_constrain
     assert '轻松自然' in system and '少量贴切幽默' in system and '颜文字' in system
     assert '严肃事项保持认真' in system and '不使用玩笑或颜文字' in system
     assert '不得削弱或遗漏' in system and '不得编造资料没有的事实' in system
-    assert 'selections 必须保留原文' in system and '500字符' in system
+    assert 'selections 必须保留原文' in system and '能用一句话说清就只写一句' in system
 
 
 def test_friendly_dorm_answer_preserves_scores_exceptions_and_original_sources():

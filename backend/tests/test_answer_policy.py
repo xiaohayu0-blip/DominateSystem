@@ -54,7 +54,7 @@ def test_other_scopes_remain_retrievable(year, grade, start, end):
 
 
 @pytest.mark.parametrize("year", [None, 2024])
-def test_overlong_reply_uses_original_with_scope_prefix(client, monkeypatch, year):
+def test_model_reply_is_preserved_with_sources(client, monkeypatch, year):
     signup(client, student())
     quote = "奖学金申请需要申请表，按学院通知办理。"
     publish("奖学金申请材料", quote, year=year)
@@ -69,7 +69,7 @@ def test_overlong_reply_uses_original_with_scope_prefix(client, monkeypatch, yea
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "奖学金申请材料")["answer"]["items"][0]
     assert calls == [False] and item["status"] in {"answered", "historical_reference"}
-    assert len(item["content"]) <= 500 and item["content"].endswith(quote)
+    assert item["content"] == quote * 30
 
 
 def test_long_evidence_and_original_links_are_allowed_with_short_answer(client, monkeypatch):
@@ -100,25 +100,10 @@ def test_exact_length_boundary_without_model_retry(client, monkeypatch, length):
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "奖学金申请")["answer"]["items"][0]
     assert calls == [False]
-    assert item["status"] == "answered" and len(item["content"]) <= 500
+    assert item["status"] == "answered" and len(item["content"]) == length
     assert "同一项目不重复计分" in item["content"]
 
 
-def test_overlong_model_output_is_replaced_with_original(client, monkeypatch):
-    signup(client, student())
-    quote = "奖学金申请需要申请表，同一项目不重复计分。"
-    publish("奖学金申请", quote)
-    monkeypatch.setattr(settings(), "model_mode", "deepseek")
-    calls = []
-
-    def model_answer(_, query, evidence, *, retry=False):
-        calls.append(retry)
-        return {"answer": quote * 40, "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
-
-    monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
-    item = ask(client, "奖学金申请")["answer"]["items"][0]
-    assert calls == [False] and len(item["content"]) <= 500
-    assert item["status"] == "answered" and item["content"].endswith(quote)
 def test_long_scholarship_citation_keeps_a_verified_short_answer():
     from app.qa import cited_answer
 
@@ -127,5 +112,5 @@ def test_long_scholarship_citation_keeps_a_verified_short_answer():
               'location': '第3页', 'excerpt': quote + '其他评定细则。' * 100}
     answer, citations = cited_answer(
         {'answer': quote, 'selections': [{'chunk_id': 'award', 'quote': quote}]},
-        [source], question='学业奖学金各等级金额是多少？', budget=500)
+        [source], question='学业奖学金各等级金额是多少？')
     assert answer == quote and citations == [source]
