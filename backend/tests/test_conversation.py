@@ -90,7 +90,7 @@ def test_partial_knowledge_is_kept_with_missing_material(monkeypatch):
         answer = chat.answer_turn(db, '申请条件和今年截止日期', {})
     assert answer['items'][0]['content'] == '条件原文'
     assert answer['items'][1]['status'] == 'missing_material'
-    assert '暂无资料' in answer['items'][1]['content']
+    assert '知识库暂时没有' in answer['items'][1]['content']
 
 
 def test_web_answer_requires_verified_search_sources(monkeypatch):
@@ -105,6 +105,24 @@ def test_web_answer_requires_verified_search_sources(monkeypatch):
         answer = chat.answer_turn(db, '最新通知', {})
     assert answer['items'][0]['status'] == 'web_unavailable'
     assert not answer['items'][0].get('web_sources')
+
+
+def test_school_history_fallback_reads_the_school_profile_page(monkeypatch):
+    url = 'https://www.wtu.edu.cn/xxgk/xxjj.htm'
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, headers={'content-type': 'text/html; charset=UTF-8'},
+            text='<p>武汉纺织大学前身始建于1958年，2010年更名为武汉纺织大学。</p>')
+
+    real_client = httpx.Client
+    monkeypatch.setattr(chat.httpx, 'Client', lambda **kw: real_client(
+        transport=httpx.MockTransport(handler), **kw))
+    sources = real_search('武汉纺织大学的成立时间是什么时候', official=True)
+    assert seen == [url]
+    assert len(sources) == 1 and sources[0]['url'] == url
+    assert '1958年' in sources[0]['excerpt']
 
 
 def test_search_filters_other_schools_and_forged_official_domains(monkeypatch):

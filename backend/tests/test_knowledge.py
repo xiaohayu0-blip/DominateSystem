@@ -551,7 +551,7 @@ def test_current_year_overrides_inherited_year_and_model_can_abstain(client, mon
     answer = ask(client, "今年申请奖学金要交什么", previous_id=previous["id"])["answer"]
     assert answer["context"]["business_year"] == current_year
     assert answer["items"][0]["status"] == "missing_material"
-    assert "暂无资料" in answer["items"][0]["content"]
+    assert "知识库暂时没有" in answer["items"][0]["content"]
 
 
 def test_historical_reference_does_not_open_an_issue(client, monkeypatch):

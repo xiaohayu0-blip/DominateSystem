@@ -17,18 +17,19 @@ from conftest import signup, student
     ('奖学金有多少', 'campus'),
     ('帮我联网确认我们学院的奖学金有多少？', 'web'),
 ])
-def test_campus_material_gap_never_uses_web(monkeypatch, question, classified_as):
+def test_campus_material_gap_checks_official_web_and_discloses_unverified_result(monkeypatch, question, classified_as):
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     monkeypatch.setattr(conversation, 'plan_turn', lambda *args: [
         {'kind': classified_as, 'question': question}])
     monkeypatch.setattr(conversation, 'policy_answer', lambda *args: {'items': [
         {'question': question, 'status': 'missing_material', 'content': '缺少依据', 'citations': []}]})
-    def unexpected(*args, **kwargs):
-        raise AssertionError('校园制度问题触发了联网兜底')
-    monkeypatch.setattr(conversation, 'direct_model_answer', unexpected)
+    def official_only(db, text, *, official):
+        assert official and text == question
+        raise conversation.MissingEvidence()
+    monkeypatch.setattr(conversation, 'direct_model_answer', official_only)
     item, = conversation.answer_turn(None, question, {})['items']
     assert item['status'] == 'missing_material'
-    assert '暂无资料' in item['content']
+    assert '知识库暂时没有' in item['content'] and '暂未找到能核实' in item['content']
 
 
 def test_unsourced_general_information_is_not_presented_as_answer(monkeypatch):
@@ -68,6 +69,30 @@ def test_light_conversation_uses_the_chat_model_without_search(monkeypatch):
     item, = conversation.answer_turn(None, question, {})['items']
     assert item['status'] == 'general_answer'
     assert item['content'].endswith('😊')
+
+
+@pytest.mark.parametrize('question', [
+    '武汉纺织大学的成立时间是什么时候',
+    '我们学校是哪一年建校的？',
+    '武汉纺织大学的校史是什么？',
+])
+def test_public_school_profile_discloses_knowledge_gap_and_searches_official_web(monkeypatch, question):
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(conversation, 'plan_turn', lambda *args: [{'kind': 'web', 'question': question}])
+    monkeypatch.setattr(conversation, 'policy_answer', lambda *args, **kwargs: {'items': [
+        {'question': question, 'status': 'missing_material', 'content': '暂无资料', 'citations': []}]})
+    monkeypatch.setattr(conversation, 'direct_model_answer', lambda *args, **kwargs: {
+        'question': question, 'status': 'general_answer', 'content': '无出处答案', 'citations': []})
+    def verified_web(db, text, *, official, search_query=None):
+        assert official and text == question
+        return {'status': 'web_answer', 'content': '学校前身始建于1958年，2010年更名。',
+                'web_sources': [{'url': 'https://www.wtu.edu.cn/xxgk/xxjj.htm'}], 'citations': []}
+    monkeypatch.setattr(conversation, 'web_answer', verified_web)
+    item, = conversation.answer_turn(None, question, {})['items']
+    assert item['status'] == 'web_answer'
+    assert item['knowledge_gap']
+    assert item['content'].startswith('知识库暂时没有相关资料。这是我联网查到的内容')
+    assert '1958' in item['content']
 
 
 def test_examples_can_be_answered_and_are_withdrawn_when_source_is_disabled(admin_client, monkeypatch):
