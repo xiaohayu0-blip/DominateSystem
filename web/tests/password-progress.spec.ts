@@ -58,9 +58,9 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
     }
   })
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: '管院 · 制度问答' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '制度咨询与办理指引' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await page.getByRole('button', { name: '注册', exact: true }).click()
+  await page.getByRole('button', { name: '注册账号', exact: true }).click()
   await page.getByLabel('本人姓名 *', { exact: true }).fill(profile.name)
   await page.getByLabel('本人手机号 *', { exact: true }).fill(profile.phone)
   await page.getByLabel('专业 *', { exact: true }).fill(profile.major)

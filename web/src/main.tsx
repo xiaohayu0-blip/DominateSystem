@@ -167,54 +167,104 @@ function PrivacyNotice() {
   </details>
 }
 
+function rebound(button: HTMLButtonElement) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  button.animate([
+    { transform: 'scale(.96)' },
+    { transform: 'scale(1.045)', offset: .62 },
+    { transform: 'scale(1)' },
+  ], { duration: 280, easing: 'ease-out' })
+}
+
 function UserApp() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
   const [editing, setEditing] = useState(false)
   const [entryMode, setEntryMode] = useState<'register' | 'login' | null>(null)
+  const [notesOpen, setNotesOpen] = useState(() => window.matchMedia('(min-width: 761px)').matches)
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 761px)')
+    const syncNotes = (event: MediaQueryListEvent) => setNotesOpen(event.matches)
+    desktop.addEventListener('change', syncNotes)
+    return () => desktop.removeEventListener('change', syncNotes)
+  }, [])
   useEffect(() => { api<Profile>('/me').then(setProfile).catch(e => { if (!(e instanceof ApiError && e.status === 401)) setError(e) }).finally(() => setLoading(false)) }, [])
-  async function logout() {
-    try {
-      await api('/logout', 'POST')
-      setProfile(null)
-      setEditing(false)
-      setEntryMode(null)
-      window.scrollTo(0, 0)
-    } catch (e) { setError(e) }
-  }
+  async function logout() { try { await api('/logout', 'POST'); setProfile(null); setEditing(false); setEntryMode(null); window.scrollTo(0, 0) } catch (e) { setError(e) } }
   function editProfile() {
     setEditing(true)
     window.scrollTo(0, 0)
   }
   const chatProfile = !loading && !editing ? profile : null
-  return <div className="user-site">
-    {profile && <div className={chatProfile ? 'user-header user-header--chat' : 'user-header'}>
-      <header className="site-header">
-        <a className="brand" href="/" aria-label="管院制度问答首页"><span className="brand-icon"><OctopusMascot/></span><span>管院 · 制度问答</span></a>
-        <button className="text-button" onClick={logout}><LogOut size={16}/>退出</button>
-      </header>
-      {chatProfile && <div className="mobile-chat-profile"><IdentityCard profile={chatProfile} edit={editProfile} logout={logout}/></div>}
-    </div>}
+  const landing = !loading && !profile && !entryMode && !editing
+  const userSiteRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const site = userSiteRef.current
+    if (!landing || !site) return
+    const viewport = window.visualViewport
+    const fitLanding = () => {
+      const visibleHeight = viewport?.scale === 1 ? viewport.height : window.innerHeight
+      const pageTop = site.getBoundingClientRect().top + window.scrollY
+      site.style.setProperty('--landing-height', `${Math.max(0, Math.floor(visibleHeight - pageTop))}px`)
+    }
+    fitLanding()
+    window.addEventListener('resize', fitLanding)
+    viewport?.addEventListener('resize', fitLanding)
+    const banner = site.previousElementSibling
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(fitLanding) : null
+    if (banner) observer?.observe(banner)
+    return () => {
+      window.removeEventListener('resize', fitLanding)
+      viewport?.removeEventListener('resize', fitLanding)
+      observer?.disconnect()
+      site.style.removeProperty('--landing-height')
+    }
+  }, [landing])
+  return <div ref={userSiteRef} className={landing ? 'user-site user-site--landing' : 'user-site'}>
+    <div className={chatProfile ? 'user-header user-header--chat' : 'user-header'}>
+    <header className="site-header">
+      <a className="brand" href="/" aria-label="管理学院制度服务首页"><span className="brand-icon"><OctopusMascot/></span><span>管理学院<small>制度服务平台</small></span></a>
+      <div className="header-actions"><nav className="public-nav" aria-label="网站导航"><a href="/" aria-current="page">制度咨询</a><a href="#service-notes">使用说明</a></nav>{profile && <button className="text-button" onClick={logout}><LogOut size={16}/>退出</button>}</div>
+    </header>
+    {chatProfile && <div className="mobile-chat-profile"><IdentityCard profile={chatProfile} edit={editProfile} logout={logout}/></div>}
+    </div>
     <ErrorBox error={error}/>
-    {loading ? <main id="main-content" className="empty">正在连接服务…</main>
-      : chatProfile ? <Chat profile={chatProfile} edit={editProfile}/>
-      : <main id="main-content" className="simple-entry">
-        {!profile && <>
-          <h1>管院 · 制度问答</h1>
-          <p>查询管理学院制度，了解请假、综测、奖学金等事项。</p>
-          <div className="account-actions" aria-label="账号操作">
-            <button type="button" className="primary account-action" aria-pressed={entryMode === 'login'} onClick={() => setEntryMode('login')}>登录</button>
-            <button type="button" className="secondary account-action" aria-pressed={entryMode === 'register'} onClick={() => setEntryMode('register')}>注册</button>
-          </div>
+    {loading ? <main id="main-content" className="empty">正在连接服务…</main> : !profile || editing ? <main id="main-content" className={landing ? 'entry-layout entry-layout--landing' : 'entry-layout'}>
+      {!profile && <section className="page-intro account-intro" aria-labelledby="account-intro-title">
+        <h1 id="account-intro-title">制度咨询与办理指引</h1>
+        <p className="account-intro-kicker">管理学院 · 你的校园小助手</p>
+        <p>学生和家长可在这里查询学院制度，了解请假、综合测评和奖学金评定的办理条件。</p>
+        {landing && <>
+          <p>提问时可以注明业务年度。答复会列出引用的文件和条文位置，方便你核对原文及适用范围。</p>
+          <p>现有资料暂时无法回答的咨询会记录到工作台，供学院后续核对和补充。</p>
         </>}
+      </section>}
+      <aside className="entry-intro" id="service-notes"><details className="service-disclosure" open={notesOpen} onToggle={e => setNotesOpen(e.currentTarget.open)}><summary>使用说明与服务范围<ChevronRight size={16}/></summary><div className="service-points">
+        <section><BookOpen size={21} strokeWidth={1.5}/><div><h3>查询制度依据</h3><p>回答附有来源与条文定位，请结合业务年度、入学年级核对。</p></div></section>
+        <section><FileText size={21} strokeWidth={1.5}/><div><h3>记录待处理问题</h3><p>资料不足或需要核实的问题将被记录，不自动向提问者发送通知。</p></div></section>
+        <section><ShieldCheck size={21} strokeWidth={1.5}/><div><h3>妥善使用登记信息</h3><p>资料由本人填写。仅凭手机号不能核验身份，也不能查询他人记录。</p></div></section>
+      </div><div className="boundary"><strong>服务范围</strong><p>本平台提供制度信息参考，不代替资格认定、审批或评审决定。</p></div></details></aside>
+      <div className="account-entry">
+        {landing && <div className="tactile-art"><OctopusMascot className="landing-octopus"/></div>}
+        {landing && <ul className="account-intro-topics" aria-label="可咨询事项">
+          <li>学生请假</li><li>综合测评</li><li>奖学金评定</li>
+        </ul>}
+        {!profile && <div className="account-actions" aria-label="账号操作">
+          <button type="button" className="secondary account-action" aria-pressed={entryMode === 'register'} onClick={event => { rebound(event.currentTarget); setEntryMode('register') }}>注册账号</button>
+          <button type="button" className="primary account-action" aria-pressed={entryMode === 'login'} onClick={event => { rebound(event.currentTarget); setEntryMode('login') }}>登录账号</button>
+        </div>}
+        {!profile && <PrivacyNotice/>}
         {(editing || entryMode) && <section className="entry-card">
-          <h2>{editing ? '修改登记资料' : entryMode === 'register' ? '注册信息' : '账号登录'}</h2>
+          <div className="section-heading">
+            <h2>{editing ? '修改登记资料' : entryMode === 'register' ? '注册信息' : '账号登录'}</h2>
+            {(editing || entryMode === 'register') && <p className="muted">请填写真实信息。</p>}
+          </div>
           {!profile && entryMode === 'login' && <UserLogin saved={setProfile}/>}
           {(editing || entryMode === 'register') && <RegistrationForm initial={editing && profile ? profile : undefined} saved={p => { setProfile(p); setEditing(false) }} cancel={editing ? () => setEditing(false) : undefined}/>}
         </section>}
-        {!profile && <PrivacyNotice/>}
-      </main>}
+      </div>
+    </main> : <Chat profile={profile} edit={editProfile}/>}
+    <footer><div><strong>管理学院 · 制度服务平台</strong><span>回答仅供参考，请以适用的正式制度及学院审核结果为准。</span></div></footer>
   </div>
 }
 

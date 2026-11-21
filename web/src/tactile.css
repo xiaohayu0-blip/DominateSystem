@@ -295,29 +295,6 @@
   color-scheme: only light;
 }
 
-.simple-entry {
-  width: min(100% - 2rem, 36rem);
-  margin: clamp(3rem, 14vh, 8rem) auto 3rem;
-  text-align: center;
-}
-
-.simple-entry h1 {
-  margin: 0 0 .75rem;
-  font-size: clamp(1.85rem, 5.5vw, 2.7rem);
-}
-
-.simple-entry .account-actions {
-  display: flex;
-  justify-content: center;
-  gap: .75rem;
-  margin: 1.5rem auto;
-}
-
-.simple-entry .entry-card {
-  margin: 1.5rem 0;
-  text-align: left;
-}
-
 .privacy-notice summary {
   width: fit-content;
   margin: 0 auto;

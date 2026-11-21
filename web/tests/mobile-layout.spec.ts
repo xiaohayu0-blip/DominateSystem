@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 
 async function openSignup(page: Page) {
-  await page.getByRole('button', { name: '注册', exact: true }).click()
+  await page.getByRole('button', { name: '注册账号', exact: true }).click()
   await page.getByLabel('密码 *', { exact: true }).fill('local-demo-test-password1')
 }
 
