@@ -15,12 +15,12 @@ from .qa import (calendar_overview, calendar_period, MAX_ANSWER_CHARS, DeepSeekM
                  YEAR_WORD, GRADE_WORD,
                  TECHNICAL_LIMIT_QUESTION, answer_question as policy_answer,
                  cited_answer, is_dependent_question, model_budget_available, semaphore)
-from .question_planning import grouped_questions, question_clauses
+from .question_planning import ALL_BRANCH_REPLY, grouped_questions, question_clauses
 from .schemas import scrub
 from .retrieval import terms
 from .competition_catalog import competition_classification
 from .ranking import ranking_answer
-from .scholarship import scholarship_request
+from .scholarship import AWARD_NAMES, requested_award_amounts, scholarship_lookup, scholarship_request
 
 
 def model_json(db, system, payload):
@@ -42,6 +42,15 @@ def plan_turn(db, text, context):
         '“联网确认一下”“帮我查查”等只是修饰当前诉求，不能拆成另一个任务。'
         '按独立业务事项分组，同一事项的能否、多少、条件、材料、时间、步骤及补充追问必须合为一个任务，'
         '一次完整回答。例如“当寝室长能加综测分吗？能加多少啊？”只能生成一个campus任务。'
+        '校园咨询只给出大类，且分支不同会改变答案时，在该任务的clarify_options列出2至6个合理的分支名称，'
+        '例如“请假要交什么材料”可列出“因病请假”和“因事请假”。选项只写名称，不假定制度内容。'
+        '能直接回答的概览、已给分支的问题、明确要求分别说明的问题无需追问。'
+        '“都说一下”“每种都讲”等指向同一大类的各分支时，要承接前文，把原诉求和各分支放进同一个任务，供一次汇总回答；'
+        '已知各分支名称且用户要求汇总时，用branches列出这些名称，便于分别查找依据。'
+        '根据语义判断，用户说“我想比较它们的区别”“给我一个完整的对照”也可能是在要求汇总，不能只看示例字面。'
+        '对同一大类的汇总请求，branch_action设为all。若用户想汇总previous_branch提供的上轮选项，设为all_previous。'
+        '用户选定上轮选项中的一项或几项时设为select_previous，并在branches中原样填写选中的名称。'
+        '用户开启新话题时忽略上一轮选项。用户只要大类概览时，正常回答概览。'
         '不同事项或明确切换话题才分开，不能因为有多个问号就拆开。'
         '本校本院的规定、安排、评审、名单、流程及公开校史归campus，先查知识库。'
         '未指明学校的校内业务（奖学金金额、申请、请假、综测加分等）默认指本校，除非前文明确是校外事项。'
@@ -53,10 +62,12 @@ def plan_turn(db, text, context):
         'search_query提取精简搜索关键词，去掉请问、联网、查一下等措辞，保留关键实体及所问事项。'
         '每个任务clauses列出所覆盖原句的0起始编号，每个编号必须且仅出现一次，组内升序，按首次出现顺序排列。'
         '输出JSON：{"tasks":[{"question":"完整问题","kind":"campus|chat|general|web",'
-        '"search_query":"搜索关键词","clauses":[0,1]}]}。'
+        '"search_query":"搜索关键词","clauses":[0,1],"clarify_options":[],'
+        '"branch_action":"none|all|all_previous|select_previous","branches":[]}]}。'
     ), {'current_question': scrub(text), 'recent_conversation': context.get('history', []),
         'clauses': [{'index': i, 'text': scrub(clause)} for i, clause in enumerate(clauses)],
-        'resolved_followup': context.get('followup_question'), 'today': today()})
+        'resolved_followup': context.get('followup_question'),
+        'previous_branch': context.get('previous_branch'), 'today': today()})
     tasks = result.get('tasks')
     if not isinstance(tasks, list) or not 1 <= len(tasks) <= 4:
         raise InvalidEvidence('invalid_conversation_plan')
@@ -66,6 +77,16 @@ def plan_turn(db, text, context):
             raise InvalidEvidence('invalid_conversation_task')
         if 'search_query' in task and (not isinstance(task['search_query'], str) or len(task['search_query']) > 500):
             raise InvalidEvidence('invalid_search_query')
+        if task.get('branch_action', 'none') not in ('none', 'all', 'all_previous', 'select_previous'):
+            raise InvalidEvidence('invalid_branch_action')
+        for field in ('clarify_options', 'branches'):
+            options = task.get(field, [])
+            if (not isinstance(options, list) or len(options) > 6
+                    or any(not isinstance(option, str) or not 1 <= len(option.strip()) <= 30
+                           or re.search(r'[\r\n。！？?<>]', option) for option in options)):
+                raise InvalidEvidence('invalid_branch_options')
+            if field in task:
+                task[field] = list(dict.fromkeys(option.strip() for option in options))
     try:
         grouped_questions(clauses, {'groups': [task.get('clauses') for task in tasks]})
     except ValueError as exc:
@@ -77,7 +98,7 @@ def plan_turn(db, text, context):
             continue
         previous = next(task for task in tasks if index - 1 in task['clauses'])
         current = next(task for task in tasks if index in task['clauses'])
-        if current is previous:
+        if current is previous or current.get('branch_action', 'none') != 'none':
             continue
         previous['question'] += ''.join(clauses[i] for i in current['clauses'])
         previous['clauses'] = sorted(previous['clauses'] + current['clauses'])
@@ -233,6 +254,7 @@ def search_web(question, *, official=False):
 
 STYLE = ('你是校园小助手小八，用自然、轻松、简洁的中文直接交流。普通咨询带1个适度表情或颜文字；'
          '心理、人身安全、处分、经济困难等严肃事项认真回答，不开玩笑不带表情。'
+         '先给结论，默认1至3个短句，省去套话和重复。多个分支用同一条答复简短对照，共同内容只写一次。'
          '纯文本，最多500字符，先整合再输出，不能截断。不要泄露内部配置。')
 WEB_GAP_PREFIX = '知识库暂时没有相关资料。这是我联网查到的内容：\n\n'
 WEB_GAP_UNVERIFIED = '知识库暂时没有相关资料。尝试联网查找后，暂未找到能核实这件事的学校官方资料。'
@@ -314,7 +336,7 @@ def general_answer(db, question, context):
         if result.get('needs_search') is True:
             return None
         answer = result.get('answer')
-        if isinstance(answer, str) and 0 < len(answer.strip()) <= 500:
+        if isinstance(answer, str) and 0 < len(answer.strip()) <= MAX_ANSWER_CHARS:
             return {'question': question, 'status': 'general_answer', 'content': answer.strip(), 'citations': []}
     raise InvalidEvidence('general_answer_too_long')
 
@@ -413,6 +435,38 @@ def fill_material_gap(db, item, *, search_query=None):
             'content': WEB_GAP_PREFIX + result['content']}
 
 
+def combine_branch_answers(question, items):
+    citations = {source.get('chunk_id', index): source
+                 for index, source in enumerate(source for item in items for source in item.get('citations', []))}
+    web_sources = {source['url']: source for item in items for source in item.get('web_sources', [])}
+    body = '\n'.join(item['content'] for item in items)
+    if len(body) > MAX_ANSWER_CHARS:
+        body = '相关分支的条款较长，请查看下方出处。'
+    status = next((status for status in ('answered', 'historical_reference', 'web_answer')
+                   if any(item['status'] == status for item in items)), items[0]['status'])
+    merged = {'question': question, 'status': status, 'content': body, 'citations': list(citations.values())}
+    if web_sources:
+        merged['web_sources'] = list(web_sources.values())
+    if any(item.get('knowledge_gap') or item['status'] == 'missing_material' for item in items):
+        merged['knowledge_gap'] = True
+    return merged
+
+
+def answer_award_amounts(db, text, context, awards):
+    items = []
+    for award in awards:
+        rule = scholarship_lookup(db, ('amount', award), context, MAX_ANSWER_CHARS, compact=True)
+        item = {'question': award, **rule}
+        if item['status'] == 'missing_material':
+            if settings().model_mode != 'mock':
+                item = fill_material_gap(db, item)
+            if item['status'] == 'missing_material':
+                item['content'] = '暂无可核实的金额。'
+        item['content'] = f"{award}：{item['content']}"
+        items.append(item)
+    return combine_branch_answers(text, items)
+
+
 def example_answer(db, question):
     if question == QUESTION_EXAMPLES[0]:
         source = calendar_period(db, question, {"business_year": 2027, "selected_year": 2027})
@@ -452,15 +506,27 @@ def answer_turn(db, text, context):
         if source and 0 < len(source["excerpt"].strip()) <= MAX_ANSWER_CHARS:
             return {"items": [{"question": text, "status": "answered", "content": source["excerpt"],
                                "citations": [source]}], "context": context, "model_mode": settings().model_mode}
-    if settings().model_mode == 'mock' or TECHNICAL_LIMIT_QUESTION.search(text):
+    if TECHNICAL_LIMIT_QUESTION.search(text):
         return policy_answer(db, text, context)
-    if scholarship_request(context.get('followup_question') or text):
+    previous_branch = context.get('previous_branch')
+    mock = settings().model_mode == 'mock'
+    fallback_awards = requested_award_amounts(text)
+    fallback_all = bool(previous_branch and ALL_BRANCH_REPLY.fullmatch(text.strip()))
+    request = scholarship_request(context.get('followup_question') or text)
+    if mock:
+        if not (fallback_all or fallback_awards):
+            return policy_answer(db, text, context)
+        tasks = [{'question': text, 'kind': 'campus',
+                  'branch_action': 'all_previous' if fallback_all else 'all'}]
+    elif request and request[1] and (not previous_branch or context.get('followup_question')):
         tasks = [{'question': text, 'kind': 'campus'}]
     else:
         try:
             tasks = plan_turn(db, text, context)
         except (ModelFailure, InvalidEvidence, TypeError, AttributeError):
             tasks = [{'question': text, 'kind': 'campus'}]
+            if fallback_all or fallback_awards:
+                tasks[0]['branch_action'] = 'all_previous' if fallback_all else 'all'
     items = []
     resolved_context = context
     for task in tasks:
@@ -470,9 +536,28 @@ def answer_turn(db, text, context):
         if any((CAMPUS_SCOPE.search(value) or school_name and school_name in value)
                and (CAMPUS_FACT.search(value) or SCHOOL_PROFILE.search(value)) for value in (original, question)):
             kind = 'campus'
-        if kind == 'campus' and len(tasks) == 1 and task.get('clauses') and not context.get('history'):
+        action = task.get('branch_action', 'none')
+        if (kind == 'campus' and len(tasks) == 1 and task.get('clauses')
+                and not context.get('history') and action == 'none'):
             question = text
         scope = dict(context)
+        branches = task.get('branches', [])
+        branch_question = question
+        if previous_branch and action in ('all_previous', 'select_previous') and kind == 'campus':
+            selected = (previous_branch['options'] if action == 'all_previous' else
+                        [branch for branch in branches if branch in previous_branch['options']])
+            if selected:
+                scope.update(previous_branch['scope'])
+                branch_question = previous_branch['question']
+                question = f"{branch_question} 请{'一起说明' if len(selected) > 1 else '说明'}{'、'.join(selected)}。"
+                branches = selected
+                if previous_branch['kind'] == 'scholarship_amount':
+                    if len(selected) > 1:
+                        if len(tasks) == 1:
+                            resolved_context = scope
+                        items.append(answer_award_amounts(db, text, scope, selected))
+                        continue
+                    question = f"{selected[0]}的奖励金额是多少？"
         years = set(re.findall(YEAR_WORD, question))
         grades = set(re.findall(GRADE_WORD, question))
         if len(years) == 1:
@@ -485,17 +570,38 @@ def answer_turn(db, text, context):
             items.extend(policy_answer(db, question, scope)['items'])
             continue
         if kind == 'campus':
-            answer = policy_answer(db, question, {**scope, "_planned_task": bool(task.get("clauses"))})
+            aggregate = action in ('all', 'all_previous') or action == 'select_previous' and len(branches) > 1
+            if action == 'all':
+                awards = requested_award_amounts(f"{original} {question} {'、'.join(branches)}", explicit=True)
+                if awards:
+                    items.append(answer_award_amounts(db, text, scope, awards))
+                    continue
+            options = task.get('clarify_options', [])
+            if len(options) >= 2 and not aggregate:
+                items.append({'question': question, 'status': 'needs_clarification', 'citations': [],
+                              'clarification_kind': 'topic_branch', 'clarification_options': options,
+                              'content': f"你想了解哪一种：{'、'.join(options)}？"})
+                continue
+            answer = policy_answer(db, question, {**scope,
+                '_planned_task': bool(task.get('clauses') or branches or aggregate),
+                '_branch_options': branches if aggregate else [], '_branch_question': branch_question})
+            task_items = []
             for item in answer['items']:
                 if item['status'] == 'missing_material' or (
                         item['status'] == 'validation_failed' and scholarship_request(item['question'])):
                     query = task.get('search_query') if item['question'] == question else None
-                    items.append(fill_material_gap(db, {**item, 'status': 'missing_material'}, search_query=query))
+                    task_items.append(fill_material_gap(db, {**item, 'status': 'missing_material'}, search_query=query))
                 else:
-                    items.append(item)
-                    items.extend(fill_material_gap(db, {'question': missing, 'status': 'missing_material',
-                                                        'content': MATERIAL_GAP, 'citations': []})
-                                 for missing in item.get('missing_questions', []))
+                    task_items.append(item)
+                    for missing in item.get('missing_questions', []):
+                        gap = fill_material_gap(db, {'question': missing, 'status': 'missing_material',
+                                                     'content': MATERIAL_GAP, 'citations': []})
+                        if aggregate:
+                            gap['content'] = f"{missing.rstrip('？?。')}：{gap['content']}"
+                        task_items.append(gap)
+            if aggregate and len(task_items) > 1:
+                task_items = [combine_branch_answers(question, task_items)]
+            items.extend(task_items)
             continue
         if kind == 'chat':
             try:

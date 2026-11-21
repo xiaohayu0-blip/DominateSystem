@@ -2,6 +2,20 @@
 import re
 
 
+ALL_BRANCHES = re.compile(
+    r"(?:全部|全都|都|(?:每|各)(?:个|种|类)(?:都)?|两种都|三种都|四种都)"
+    r"(?:讲|说|介绍|解释|列|看看|查|(?:告诉|给)我|(?:想|要)(?:看|听|了解|知道)|可以|行)"
+    r"|(?:每|各)(?:个|种|类)(?:都)?(?:是|有)?(?:多少|怎么|如何|需要)"
+    r"|(?:分别|各自)(?:是|有)?(?:多少|怎么|如何|需要|要|讲|说|列|介绍)"
+    r"|^(?:那|请|我想看)?\s*(?:全部|全都|都要|都想知道|每种都要|每个都要)[？?。！!\s]*$"
+)
+ALL_BRANCH_REPLY = re.compile(
+    r"(?:那就|那|请|麻烦)?(?:帮我)?(?:全部|全都|都|两种都|三种都|四种都|(?:每|各)(?:种|个|类)(?:都)?)"
+    r"(?:(?:讲|说|介绍|查|列)(?:一[下遍]|[讲说查])?|要|想知道|给我看看|可以|行)?"
+    r"[吧呢呀啊。！!？?\s]*"
+)
+
+
 def question_clauses(text: str) -> list[str]:
     # These boundaries only number pieces of input; the model decides their relationship.
     return [part.strip(" \t\r") for part in re.split(

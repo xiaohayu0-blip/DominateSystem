@@ -302,6 +302,47 @@ def test_router_keeps_named_independent_topics_separate(monkeypatch):
     assert len(tasks) == 2
 
 
+@pytest.mark.parametrize('reply,chosen', [
+    ('生病的那一种', ['因病请假']),
+    ('都说一下', ['因病请假', '因事请假']),
+    ('我想比较它们的区别', ['因病请假', '因事请假']),
+])
+def test_router_asks_for_branch_and_resumes_the_same_request(monkeypatch, reply, chosen):
+    question = '2025年请假要交哪些材料？'
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', real_plan)
+    def route(self, system, payload):
+        task = {'question': question, 'kind': 'campus', 'clauses': [0]}
+        if previous := payload['previous_branch']:
+            assert previous['options'] == ['因病请假', '因事请假']
+            assert payload['current_question'] == reply
+            task.update(branch_action='all_previous' if len(chosen) == 2 else 'select_previous',
+                        branches=[] if len(chosen) == 2 else chosen)
+        else:
+            task['clarify_options'] = ['因病请假', '因事请假']
+        return {'tasks': [task]}
+    monkeypatch.setattr(DeepSeekModel, 'request_json', route)
+    data = QuestionInput(request_id='branch-followup-01', text=question)
+    with SessionLocal() as db:
+        answer = chat.answer_turn(db, question, context_for(data))
+        item, = answer['items']
+        assert item['status'] == 'needs_clarification'
+        assert '因病请假' in item['content'] and '因事请假' in item['content']
+        previous = SimpleNamespace(text=question, context=answer['context'], answer=answer)
+        scope = context_for(QuestionInput(request_id='branch-followup-02', text=reply), previous)
+        seen = []
+        def policy(db, text, context):
+            seen.append((text, context))
+            return {'items': [{'question': text, 'status': 'answered', 'content': '申请材料见原文。', 'citations': []}]}
+        monkeypatch.setattr(chat, 'policy_answer', policy)
+        result, = chat.answer_turn(db, reply, scope)['items']
+    queried, query_context = seen[0]
+    assert result['status'] == 'answered'
+    assert len(seen) == 1 and query_context['business_year'] == 2025
+    assert all(branch in queried for branch in chosen) and '材料' in queried
+    assert ('因事请假' in queried) == (len(chosen) == 2)
+
+
 def test_router_cannot_drop_current_question_clauses(monkeypatch):
     from app.qa import InvalidEvidence
     monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {'tasks': [

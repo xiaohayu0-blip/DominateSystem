@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from .models import Chunk, Document
+from .question_planning import ALL_BRANCHES
 from .retrieval import citation
 
 
@@ -51,6 +52,18 @@ def scholarship_request(query):
     return None
 
 
+def requested_award_amounts(query, *, explicit=False):
+    if (not AMOUNT.search(query) or not (explicit or ALL_BRANCHES.search(query))
+            or re.search(r"研究生|硕士|博士|申请|材料|截止|发放时间|什么时候发|名额|排名|条件|要求|加分|评审", query)):
+        return []
+    names = [name for name, pattern in AWARD_NAMES.items() if re.search(pattern, query)]
+    if len(names) >= 2:
+        return names
+    if not names and re.search(r"(?<![\u4e00-\u9fff])奖学金|(?:每种|各种|各类|所有|本科生|学校)奖学金", query):
+        return list(AWARD_NAMES)
+    return []
+
+
 def matching_clause(text, kind, award):
     if kind == "ranking":
         return (re.search(RANK, text) and re.search(COMPREHENSIVE, text)
@@ -61,7 +74,7 @@ def matching_clause(text, kind, award):
             and re.search(r"奖励标准|奖金|每生每年|每人每年|元/学年/人", text))
 
 
-def scholarship_lookup(db, request, context, max_chars):
+def scholarship_lookup(db, request, context, max_chars, *, compact=False):
     kind, award = request
     if award is None:
         return {"status": "needs_clarification", "content": AWARD_CHOICES, "citations": [],
@@ -84,6 +97,8 @@ def scholarship_lookup(db, request, context, max_chars):
         text = re.sub(r"\s+", " ", chunk.text).strip()
         text = re.sub(r"^[（(][一二三四五六七八九十]+[）)]\s*", "", text)
         prefix = f"按{year}年版《{document.title.rsplit('.', 1)[0]}》：\n" if document.business_year else ""
+        if compact and prefix:
+            prefix = f"按{year}年版，"
         if len(prefix + text) <= max_chars:
             candidates.append((document.business_year == year, prefix + text, chunk, document))
     if candidates:
@@ -93,6 +108,9 @@ def scholarship_lookup(db, request, context, max_chars):
             text, (chunk, doc) = next(iter(tied.items()))
             return {"status": "answered", "content": text, "citations": [citation(chunk, doc)]}
         if len(tied) > 1:
+            if compact:
+                return {"status": "document_conflict", "content": "找到不同的金额标准，需核对适用版本。",
+                        "citations": [citation(chunk, doc) for chunk, doc in tied.values()]}
             return None
     if kind == "amount":
         return {"status": "missing_material", "content": "知识库暂时没有可核实的这项奖学金金额条款。",
