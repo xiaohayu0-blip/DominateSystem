@@ -28,8 +28,13 @@ def scholarship_branches(text):
     return {name for name, pattern in SCHOLARSHIP_BRANCHES.items() if re.search(pattern, text)}
 
 
+DAILY_LIMIT_MESSAGE = '今日应用提问次数已达上限'
+
+
 def model_json(db, system, payload):
-    if not model_budget_available(db) or not semaphore.acquire(timeout=1):
+    if not model_budget_available(db):
+        raise ModelFailure('daily_limit')
+    if not semaphore.acquire(timeout=1):
         raise ModelFailure('resource_limit')
     try:
         return DeepSeekModel().request_json(system, payload)
@@ -533,6 +538,11 @@ def prepare_turn(db, text, context):
 
 
 def answer_turn(db, text, context):
+    if settings().model_mode == 'deepseek' and not model_budget_available(db):
+        return {
+            'items': [{'question': text, 'status': 'daily_limit', 'content': DAILY_LIMIT_MESSAGE, 'citations': []}],
+            'context': context, 'model_mode': 'deepseek',
+        }
     response = prepare_turn(db, text, context)
     for item in response['items']:
         needs_composition = item.pop('_compose', False)
@@ -548,6 +558,11 @@ def answer_turn(db, text, context):
                 '按已核对信息保留关键数值、单位、适用年份和条件。输出JSON：{"answer":"简短答复"}。'
             ), {'question': scrub(item['question']), 'verified_facts': facts})
             item['content'] = model_text(result.get('answer'))
-        except (InvalidEvidence, ModelFailure, TypeError, AttributeError):
+        except ModelFailure as exc:
+            if str(exc) == 'daily_limit':
+                item.update(status='daily_limit', content=DAILY_LIMIT_MESSAGE)
+            else:
+                item.update(status='system_error', content='这次没收到模型答复，请重试。')
+        except (InvalidEvidence, TypeError, AttributeError):
             item.update(status='system_error', content='这次没收到模型答复，请重试。')
     return response

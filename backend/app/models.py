@@ -156,6 +156,12 @@ class MailAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class ApplicationSettings(Base):
+    __tablename__ = "application_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    daily_model_limit: Mapped[int | None] = mapped_column(Integer)
+
+
 class Audit(Base):
     __tablename__ = "audit"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)

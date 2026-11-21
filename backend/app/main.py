@@ -19,12 +19,12 @@ from .calendar_index import CALENDAR_NOTE, verified_calendar_parts
 from .config import settings
 from .conversation import QUESTION_EXAMPLES, example_answer
 from .db import SessionLocal, get_db, now
-from .qa import context_for
+from .qa import context_for, daily_model_limit
 from .progress import question_progress
 from .streaming import answer_events
 from .embeddings import BGE_MODEL, bge_model
 from .retrieval import build_chunks, index_bge
-from .schemas import (DocumentMeta, EventUpdate, FormalReply, IssueUpdate, LoginInput, MergeInput,
+from .schemas import (DailyLimitUpdate, DocumentMeta, EventUpdate, FormalReply, IssueUpdate, LoginInput, MergeInput,
                       QuestionInput, RegisterInput, SignupInput)
 from .security import (admin, audit, hash_password, issue_session, token_hash,
                        user, verify_password)
@@ -724,8 +724,19 @@ def admin_settings(actor=Depends(admin), db: DBSession = Depends(get_db)):
             "weekly_mail_enabled": cfg.weekly_mail_enabled, "real_email_authorized": cfg.allow_real_email,
             "retriever": f"keyword+{BGE_MODEL}" if cfg.embedding_mode == "bge" else "keyword+character-hash-vector-v1",
             "ocr_enabled": cfg.ocr_enabled,
-            "retention": "preview_only", "daily_model_limit": cfg.model_daily_limit,
+            "retention": "preview_only", "daily_model_limit": daily_model_limit(db),
             "pending_mail": db.scalar(select(func.count()).select_from(m.MailJob).where(m.MailJob.status.in_(["pending", "retry", "sending"])))}
+
+
+@app.put("/api/admin/settings/daily-model-limit")
+def update_daily_model_limit(data: DailyLimitUpdate, actor=Depends(admin), db: DBSession = Depends(get_db)):
+    db.execute(text(
+        "INSERT INTO application_settings (id, daily_model_limit) VALUES (1, :limit) "
+        "ON CONFLICT (id) DO UPDATE SET daily_model_limit = excluded.daily_model_limit"
+    ), {"limit": data.daily_model_limit})
+    audit(db, actor, "update_daily_model_limit", "application_settings", daily_model_limit=data.daily_model_limit)
+    db.commit()
+    return {"daily_model_limit": data.daily_model_limit}
 
 
 @app.get("/api/admin/audit")

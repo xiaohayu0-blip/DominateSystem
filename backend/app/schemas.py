@@ -6,6 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 from .security import validate_new_password
 
+
+class DailyLimitUpdate(BaseModel):
+    daily_model_limit: int = Field(strict=True, ge=0, le=2_147_483_647)
+
 Text80 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 Phone = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^1[3-9]\d{9}$")]
 

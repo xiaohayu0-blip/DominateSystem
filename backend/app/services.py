@@ -87,7 +87,7 @@ def finish_question(question_id, factory=SessionLocal):
             report_progress("composing")
             resolved_context = answer.get("context", q.context)
             failed_items = [item for item in answer["items"] if item["status"] not in {
-                "answered", "historical_reference", "general_answer", "web_answer", "web_unavailable"}]
+                "answered", "historical_reference", "general_answer", "web_answer", "web_unavailable", "daily_limit"}]
             failed_items.extend({**item, "status": "missing_material"} for item in answer["items"]
                                 if item.get("knowledge_gap"))
             if failed_items:

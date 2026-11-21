@@ -459,6 +459,7 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
 
 const sections = [
   ['overview', '工作概览', LayoutDashboard], ['weekly', '后台周报', CalendarDays], ['events', '紧急事件', Siren], ['knowledge', '资料维护', Files], ['vocabulary', '词语维护', BookOpen], ['people', '登记资料', Users], ['questions', '问答记录', BookOpen],
+  ['settings', '系统设置', ShieldCheck],
 ] as const
 
 function AdminApp() {
@@ -510,6 +511,9 @@ function Load<T>({ path, children, autoRefresh = false }: { path: string; childr
 }
 
 function AdminSection({ section, navigate }: { section: string; navigate: (s: string) => void }) {
+  if (section === 'settings') return <Load<{ daily_model_limit: number }> path="/admin/settings">
+    {data => <DailyLimitForm initialLimit={data.daily_model_limit}/>}
+  </Load>
   if (section === 'overview') return <Load<{ weekly: { new: number }; total_issue_groups: number; pending_issue_groups: number; open_events: number; mail_attention: number; pending_questions: number; documents: number }> autoRefresh path="/admin/overview">{d => <><div className="overview-banner"><div><span className="eyebrow">待办与处理进度</span><h2>工作事项</h2><p>当前待解决问题组 <strong>{d.pending_issue_groups} 组</strong></p></div><OctopusMascot className="admin-overview-mascot"/></div><div className="stats">{[[d.open_events, '未处理紧急事件', 'events'], [d.mail_attention, '邮件发送异常', 'events'], [d.weekly.new, '本周新增问题组', 'weekly'], [d.total_issue_groups, '全部历史问题组', 'history']].map(([n, title, target]) => <button key={String(title)} className="stat-card" onClick={() => navigate(String(target))}><span>{title}</span><strong>{n}</strong>{(target === 'weekly' || target === 'history') && <span>含已解决记录</span>}<ArrowUpRight size={20}/></button>)}</div><div className="two-columns"><section className="panel"><h3>资料维护与复测</h3><p>上传的资料解析后自动发布，系统会在后台复测相关待处理问题。</p><button className="secondary" onClick={() => navigate('knowledge')}>维护制度资料<ArrowUpRight size={16}/></button></section><section className="panel"><h3>当前待关注</h3><p>待生成回答：{d.pending_questions} 条</p><p>资料版本：{d.documents} 份</p><p className="muted">周报在北京时间每周一 09:00 发送上周新增问题。邮件提交成功不等于人工处置完成。</p></section></div></>}</Load>
   if (section === 'weekly' || section === 'history') return <><div className="filter-bar"><button className={section === 'weekly' ? 'primary' : 'secondary'} onClick={() => navigate('weekly')}>本周新增问题组</button><button className={section === 'history' ? 'primary' : 'secondary'} onClick={() => navigate('history')}>全部历史问题组</button></div>{section === 'weekly' ? <WeeklyPage/> : <IssueHistory/>}</>
   if (section === 'vocabulary') return <VocabularyPage/>
@@ -518,6 +522,48 @@ function AdminSection({ section, navigate }: { section: string; navigate: (s: st
   if (section === 'people') return <Load<Profile[]> path="/admin/people">{data => data.length ? <div className="record-grid">{data.map((p, i) => <section className="panel" key={p.id ?? i}><ProfileView person={p}/><small>登记编号 {p.id}</small></section>)}</div> : <Empty/>}</Load>
   if (section === 'questions') return <Load<Question[]> path="/admin/questions">{data => data.length ? data.map(q => <details className="panel" key={q.id}><summary><b>{q.text}</b><small>{stamp(q.created_at)}</small></summary>{q.snapshot && <ProfileView person={q.snapshot}/>}<AnswerView answer={q.answer}/></details>) : <Empty/>}</Load>
   return null
+}
+
+function DailyLimitForm({ initialLimit }: { initialLimit: number }) {
+  const [limit, setLimit] = useState(String(initialLimit))
+  const [savedLimit, setSavedLimit] = useState(initialLimit)
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setBusy(true)
+    setSaved(false)
+    setError(null)
+    try {
+      const result = await api<{ daily_model_limit: number }>(
+        '/admin/settings/daily-model-limit', 'PUT', { daily_model_limit: Number(limit) },
+      )
+      setSavedLimit(result.daily_model_limit)
+      setLimit(String(result.daily_model_limit))
+      setSaved(true)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <section className="panel">
+    <h2>每日提问限额</h2>
+    <form onSubmit={save}>
+      <Field title="全站每日提问次数" hint="保存后立即生效。设为 0 将暂停模型问答。">
+        <input type="number" required min={0} max={2147483647} step={1} value={limit} disabled={busy}
+          onChange={e => { setLimit(e.target.value); setSaved(false) }}/>
+      </Field>
+      <ErrorBox error={error}/>
+      <button className="primary" disabled={busy || !limit || Number(limit) === savedLimit}>
+        {busy ? '保存中…' : '保存限额'}
+      </button>
+      {saved && <p role="status">每日提问限额已更新为 {savedLimit} 次。</p>}
+    </form>
+  </section>
 }
 
 const reasons = ['missing_material', 'needs_clarification', 'document_conflict', 'validation_failed', 'system_error', 'out_of_scope']

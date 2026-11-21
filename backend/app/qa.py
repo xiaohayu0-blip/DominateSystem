@@ -15,7 +15,7 @@ from .config import settings
 from .competition import TEAM_SIZE_REPLY, competition_score
 from .competition_catalog import competition_classification
 from .evidence_numbers import check_enumerated_counts, comparisons, normalized_numbers, quantities, scenario_quantities
-from .models import Chunk, Document, Question
+from .models import ApplicationSettings, Chunk, Document, Question
 from .policy_context import clarification_for, policy_query, search_policy_evidence
 from .question_planning import grouped_questions, named_branch_reply, question_clauses
 from .progress import report_progress
@@ -335,11 +335,16 @@ def split_questions(text: str):
     return parts[:8]
 
 
+def daily_model_limit(db):
+    override = db.scalar(select(ApplicationSettings.daily_model_limit).where(ApplicationSettings.id == 1))
+    return settings().model_daily_limit if override is None else override
+
+
 def model_budget_available(db):
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
     used = db.scalar(select(func.count()).select_from(Question).where(
         Question.model_mode == "deepseek", Question.created_at >= datetime.combine(today, datetime.min.time())))
-    return used < settings().model_daily_limit
+    return used < daily_model_limit(db)
 
 
 def planned_questions(db, text, model):
