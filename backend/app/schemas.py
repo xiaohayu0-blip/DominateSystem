@@ -59,6 +59,7 @@ class QuestionInput(StrictModel):
     business_year: int | None = Field(default=None, ge=2000, le=2100)
     admission_year: int | None = Field(default=None, ge=2000, le=2100)
     previous_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    conversation_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
 class DocumentMeta(StrictModel):
@@ -106,6 +107,7 @@ class MergeInput(StrictModel):
 class EventUpdate(StrictModel):
     state: Literal["open", "following", "closed"]
     note: str = Field(min_length=1, max_length=4000)
+    review: Literal["pending", "needs_followup", "false_alarm", "undetermined"] | None = None
 
 
 def scrub(text: str) -> str:

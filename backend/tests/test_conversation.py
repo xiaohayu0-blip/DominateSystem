@@ -28,23 +28,21 @@ def test_general_chat_does_not_require_documents(monkeypatch):
     assert answer['items'][0]['citations'] == []
 
 
-def test_campus_knowledge_miss_lets_deepseek_search_directly(monkeypatch):
-    question = '联网搜索一下武汉纺织大学的成立时间'
-    url = 'https://www.wtu.edu.cn/xxgk/xxjj.htm'
-    plan(monkeypatch, [{'question': question, 'kind': 'campus'}])
-    monkeypatch.setattr(chat, 'policy_answer', lambda *a: {'items': [
-        {'question': question, 'status': 'missing_material', 'content': '缺失', 'citations': []}]})
+def test_general_information_uses_deepseek_search_sources(monkeypatch):
+    question = '机会成本是什么意思？'
+    url = 'https://example.org/economics/opportunity-cost'
+    plan(monkeypatch, [{'question': question, 'kind': 'general'}])
     seen = []
 
     def handler(request):
         body = json.loads(request.content)
         seen.append(body)
         return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {
-            'content': '武汉纺织大学的前身始建于1958年，2010年更名为武汉纺织大学。',
+            'content': '机会成本是放弃的最佳替代选项的价值。',
             'annotations': [{'type': 'url_citation', 'url_citation': {'url': url}}],
             'server_tool_calls': [{'calls': [{'status': 'completed', 'sources': [
-                {'type': 'url', 'url': url, 'title': '学校简介',
-                 'snippet': '学校前身始建于1958年，2010年更名为武汉纺织大学。'}]}]}],
+                {'type': 'url', 'url': url, 'title': '经济学概念',
+                 'snippet': '机会成本是放弃的最佳替代选项的价值。'}]}]}],
         }}]})
 
     real_client = httpx.Client
@@ -53,25 +51,11 @@ def test_campus_knowledge_miss_lets_deepseek_search_directly(monkeypatch):
     with SessionLocal() as db:
         item = chat.answer_turn(db, question, {})['items'][0]
     assert item['status'] == 'web_answer'
-    assert '1958年' in item['content']
+    assert '最佳替代选项' in item['content']
     assert item['web_sources'][0]['url'] == url
     assert seen[0]['messages'][-1]['content'] == question
     assert {'type': 'deepseek_web_search'} in seen[0]['tools']
     assert 'response_format' not in seen[0]
-
-
-def test_campus_knowledge_miss_can_return_direct_model_text_without_citations(monkeypatch):
-    question = '学校什么时候成立'
-    plan(monkeypatch, [{'question': question, 'kind': 'campus'}])
-    monkeypatch.setattr(chat, 'policy_answer', lambda *a: {'items': [
-        {'question': question, 'status': 'missing_material', 'content': '缺失', 'citations': []}]})
-    monkeypatch.setattr(DeepSeekModel, 'request_web',
-                        lambda *a: {'content': '武汉纺织大学的前身始建于1958年。'}, raising=False)
-    with SessionLocal() as db:
-        item = chat.answer_turn(db, question, {})['items'][0]
-    assert item['status'] == 'general_answer'
-    assert '1958年' in item['content']
-    assert not item['citations'] and not item.get('web_sources')
 
 
 def test_deepseek_can_answer_without_tools_if_the_endpoint_rejects_them(monkeypatch):
@@ -93,7 +77,7 @@ def test_deepseek_can_answer_without_tools_if_the_endpoint_rejects_them(monkeypa
     assert len(requests) == 2 and 'tools' not in requests[1]
 
 
-def test_partial_knowledge_is_kept_when_search_fails(monkeypatch):
+def test_partial_knowledge_is_kept_with_missing_material(monkeypatch):
     plan(monkeypatch, [{'question': '申请条件', 'kind': 'campus'},
                        {'question': '今年报名截止日期', 'kind': 'campus'}])
     def policy(db, text, context):
@@ -106,7 +90,7 @@ def test_partial_knowledge_is_kept_when_search_fails(monkeypatch):
         answer = chat.answer_turn(db, '申请条件和今年截止日期', {})
     assert answer['items'][0]['content'] == '条件原文'
     assert answer['items'][1]['status'] == 'missing_material'
-    assert '联网' in answer['items'][1]['content']
+    assert '暂无资料' in answer['items'][1]['content']
 
 
 def test_web_answer_requires_verified_search_sources(monkeypatch):
@@ -119,7 +103,7 @@ def test_web_answer_requires_verified_search_sources(monkeypatch):
     })
     with SessionLocal() as db:
         answer = chat.answer_turn(db, '最新通知', {})
-    assert answer['items'][0]['status'] == 'general_answer'
+    assert answer['items'][0]['status'] == 'web_unavailable'
     assert not answer['items'][0].get('web_sources')
 
 
@@ -194,16 +178,15 @@ def test_web_answer_keeps_real_links_and_rejects_wrong_numbers(monkeypatch):
         assert answer['items'][0]['web_sources'][0]['url'] == url
         message['content'] = '开放30个申请名额，仅限大二学生。'
         failed = chat.answer_turn(db, '最新发布', {})
-        assert failed['items'][0]['status'] == 'missing_material'
+        assert failed['items'][0]['status'] == 'web_unavailable'
 
 
 def test_general_answer_rewrites_over_limit_and_does_not_truncate(monkeypatch):
-    plan(monkeypatch, [{'question': '解释机会成本', 'kind': 'general'}])
     answers = iter([{'answer': '字' * 501}, {'answer': '机会成本是放弃的最佳替代选择的价值 😊'}])
     monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: next(answers))
     with SessionLocal() as db:
-        answer = chat.answer_turn(db, '解释机会成本', {})
-    assert answer['items'][0]['content'].endswith('😊')
+        answer = chat.general_answer(db, '解释机会成本', {})
+    assert answer['content'].endswith('😊')
 
 
 def test_history_is_bounded_and_scrubbed():

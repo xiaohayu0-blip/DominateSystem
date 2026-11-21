@@ -1,4 +1,3 @@
-import json
 import re
 import smtplib
 import ssl
@@ -46,15 +45,23 @@ def detect_danger(text: str, previous: str = "") -> bool:
     )
 
 
+def alert_mail_body(event, question):
+    created = event.created_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
+    return (
+        "管理学院危机预警（待人工核实）\n\n"
+        f"事件编号：{event.id}\n"
+        f"触发时间：{created:%Y-%m-%d %H:%M:%S}（北京时间）\n"
+        f"触发摘要：{scrub(question.text).strip()[:160]}\n\n"
+        "请登录管理工作台，按事件编号核对登记信息及完整对话，并记录核实结论。\n"
+        f"管理工作台：{settings().public_origin.rstrip('/')}/admin\n"
+    )
+
+
 def create_alert(db, question: Question):
     event = EmergencyEvent(question_id=question.id)
     db.add(event)
     db.flush()
-    body = json.dumps({"event_id": event.id, "time_utc": now().isoformat(),
-                       "text": question.text, "self_reported_profile": question.snapshot,
-                       "notice": "资料由用户自行填写，未核验身份；家长孩子信息不代表已核实关系。"},
-                      ensure_ascii=False, indent=2)
-    db.add(MailJob(event_id=event.id, mode=settings().mail_mode, body=body))
+    db.add(MailJob(event_id=event.id, mode=settings().mail_mode, body=alert_mail_body(event, question)))
     return event
 
 
@@ -155,6 +162,9 @@ def run_one(factory=SessionLocal) -> bool:
         if claimed.rowcount != 1:
             return True
         job = db.get(MailJob, job_id)
+        if job.event_id and job.body.lstrip().startswith("{"):
+            event = db.get(EmergencyEvent, job.event_id)
+            job.body = alert_mail_body(event, db.get(Question, event.question_id))
         if job.mode == "smtp" and not smtp_ready(weekly=bool(job.week_start)):
             job.status, job.error_code = "unconfigured", "smtp_not_authorized_or_configured"
         else:

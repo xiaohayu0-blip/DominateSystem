@@ -547,11 +547,11 @@ def test_current_year_overrides_inherited_year_and_model_can_abstain(client, mon
     publish("奖学金评定办法", "申请校级奖学金要求综合素质测评成绩位于专业前30%。", year=current_year)
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
     monkeypatch.setattr(DeepSeekModel, "select_evidence",
-                        lambda *_: {"answer": "资料未说明应交材料，无法回答。", "selections": []})
+                        lambda *_, **__: {"answer": "资料未说明应交材料，无法回答。", "selections": []})
     answer = ask(client, "今年申请奖学金要交什么", previous_id=previous["id"])["answer"]
     assert answer["context"]["business_year"] == current_year
     assert answer["items"][0]["status"] == "missing_material"
-    assert "联网检索" in answer["items"][0]["content"]
+    assert "暂无资料" in answer["items"][0]["content"]
 
 
 def test_historical_reference_does_not_open_an_issue(client, monkeypatch):

@@ -11,13 +11,15 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .config import settings
-from .qa import (calendar_overview, MAX_ANSWER_CHARS, DeepSeekModel, InvalidEvidence, MissingEvidence, ModelFailure,
+from .qa import (calendar_overview, calendar_period, MAX_ANSWER_CHARS, DeepSeekModel, InvalidEvidence, MissingEvidence, ModelFailure,
                  YEAR_WORD, GRADE_WORD,
                  TECHNICAL_LIMIT_QUESTION, answer_question as policy_answer,
                  is_dependent_question, model_budget_available, semaphore, verified_excerpts)
 from .question_planning import grouped_questions, question_clauses
 from .schemas import scrub
 from .retrieval import terms
+from .competition_catalog import competition_classification
+from .ranking import ranking_answer
 
 
 def model_json(db, system, payload):
@@ -40,7 +42,9 @@ def plan_turn(db, text, context):
         '按独立业务事项分组，同一事项的能否、多少、条件、材料、时间、步骤及补充追问必须合为一个任务，'
         '一次完整回答。例如“当寝室长能加综测分吗？能加多少啊？”只能生成一个campus任务。'
         '不同事项或明确切换话题才分开，不能因为有多个问号就拆开。'
-        '校园规定、学校学院事务、资格、名单、流程归campus；先由知识库回答。'
+        '答案取决于本校本院的规定、安排、评审、名单、流程或其他具体事实时归campus，只查知识库。'
+        '未指明学校的校内业务（奖学金金额、申请、请假、综测加分等）默认指本校，除非前文明确是校外事项。'
+        '是否要求联网不改变归类。仅询问通用写法或概念（例如奖学金申请书怎么写）归general。'
         '闲聊、创作、知识解释、通用建议归general；最新信息、新闻、天气、价格等归web。'
         '学校具体事实必须归campus，不能归general或用外校规定替代。'
         '每个question是当前诉求的自足问句，禁止擅自增添事实。'
@@ -256,8 +260,7 @@ def deepseek_sources(message, *, official):
 
 def direct_model_answer(db, question, *, official=False):
     prompt = STYLE + (
-        '知识库没有查到这一问，请直接回答。用户要求联网或问题涉及学校具体事实、'
-        '实时信息时，如可用请使用内置搜索，并尽量给出工具来源。学校问题优先查询学校官网。'
+        '必须先使用内置搜索，再依据搜索工具实际返回的来源回答当前通用问题。'
         '不编造链接、学校制度、截止日期、资格或实时信息；无法确认时直接说明。'
         '来源由系统另行显示，正文只输出答案，不写链接或引用标记。'
     )
@@ -276,17 +279,16 @@ def direct_model_answer(db, question, *, official=False):
         if not isinstance(content, str) or not content.strip():
             continue
         sources = deepseek_sources(message, official=official)
-        if not sources and official:
-            content = '模型参考（未核对学校官方来源）：' + content.strip()
+        if not sources or not all(source['excerpt'] for source in sources):
+            raise MissingEvidence()
         if len(content.strip()) > 500 or re.search(r'https?://|www\.|<[^>]+>|!\[|\]\(', content, re.I):
             continue
-        if sources and all(source['excerpt'] for source in sources):
-            try:
-                content, _ = validate_web_text(content, sources)
-            except InvalidEvidence:
-                continue
-        return {'question': question, 'status': 'web_answer' if sources else 'general_answer',
-                'content': content.strip(), 'citations': [], **({'web_sources': sources} if sources else {})}
+        try:
+            content, _ = validate_web_text(content, sources)
+        except InvalidEvidence:
+            continue
+        return {'question': question, 'status': 'web_answer',
+                'content': content.strip(), 'citations': [], 'web_sources': sources}
     raise InvalidEvidence('direct_answer_invalid')
 
 
@@ -345,7 +347,42 @@ def web_answer(db, question, *, official=False, search_query=None):
                 raise
 
 
+QUESTION_EXAMPLES = (
+    "2027年寒假起止日期是什么？",
+    "国家奖学金评审中，智育专业排名第3名计多少分？",
+    "2025年挑战杯专项赛属于哪类赛事？",
+)
+MATERIAL_GAP = "暂无资料。当前知识库没有足够的制度依据，问题已记录，建议向学院确认。"
+GREETING = re.compile(r"(?:你好|您好|嗨|哈喽|谢谢|感谢|再见|早上好|晚上好|小八你好|hello|hi)[！!。\s]*", re.I)
+CAMPUS_SCOPE = re.compile(r"本校|本院|我校|我院|我们学校|我们学院|学院的|学校的|武汉纺织大学")
+CAMPUS_FACT = re.compile(r"规定|制度|流程|审批|截止|评[定审选]|资格|名单|模板|多少|几分|何时|什么时候|安排|怎么申请")
+
+
+def example_answer(db, question):
+    if question == QUESTION_EXAMPLES[0]:
+        source = calendar_period(db, question, {"business_year": 2027, "selected_year": 2027})
+        if source and re.search(r"2027年\d+月\d+日至2027年\d+月\d+日", source["excerpt"]) \
+                and len(source["excerpt"].strip()) <= MAX_ANSWER_CHARS:
+            return {"status": "answered", "content": source["excerpt"], "citations": [source]}
+    elif question == QUESTION_EXAMPLES[1]:
+        result = ranking_answer(db, question, {})
+        if result and result["status"] == "answered" and len(result["content"]) <= MAX_ANSWER_CHARS:
+            return result
+    elif question == QUESTION_EXAMPLES[2]:
+        result = competition_classification(db, question)
+        if result:
+            sources, grades, note = result
+            if len(sources) == len(grades) == 1 and not note and len(sources[0]["excerpt"]) <= MAX_ANSWER_CHARS:
+                return {"status": "answered", "content": sources[0]["excerpt"], "citations": sources}
+    return None
+
+
 def answer_turn(db, text, context):
+    if text in QUESTION_EXAMPLES:
+        result = example_answer(db, text) or {
+            "status": "missing_material", "content": MATERIAL_GAP, "citations": []}
+        item = {"question": text, **result}
+        return {"items": [item], "context": context, "model_mode": settings().model_mode}
     annual_holiday = re.fullmatch(
         r"(?:请问)?(?:我们学校|学校|本校)?(今年|去年|20\d{2}年)(?:我们学校|学校|本校)?"
         r"(?:什么时候放假|几号放假|有哪些假期|放假安排)(?:啊|呀|呢|吗)?[？?。！!]*", text.strip())
@@ -366,6 +403,9 @@ def answer_turn(db, text, context):
     resolved_context = context
     for task in tasks:
         question, kind = task['question'], task['kind']
+        original = ''.join(question_clauses(text)[i] for i in task['clauses']) if task.get('clauses') else question
+        if any(CAMPUS_SCOPE.search(value) and CAMPUS_FACT.search(value) for value in (original, question)):
+            kind = 'campus'
         if kind == 'campus' and len(tasks) == 1 and task.get('clauses') and not context.get('history'):
             question = text
         scope = dict(context)
@@ -382,35 +422,33 @@ def answer_turn(db, text, context):
             continue
         if kind == 'campus':
             answer = policy_answer(db, question, {**scope, "_planned_task": bool(task.get("clauses"))})
-            pending = []
             for item in answer['items']:
                 if item['status'] == 'missing_material':
-                    pending.append(item['question'])
+                    content = item['content']
+                    items.append({**item, 'content': content if '暂无资料' in content else MATERIAL_GAP})
                 else:
                     items.append(item)
-                    pending.extend(item.get('missing_questions', []))
-        else:
-            pending = [question]
-        for missing in pending[:4]:
-            if kind == 'general':
-                try:
-                    result = general_answer(db, missing, context)
-                    if result:
-                        items.append(result)
-                        continue
-                except (ModelFailure, InvalidEvidence, TypeError, AttributeError):
-                    items.append({'question': missing, 'status': 'system_error', 'citations': [],
-                                  'content': '聊天服务暂时未能完成回答，请稍后重试，问题已记录。'})
-                    continue
+                    items.extend({'question': missing, 'status': 'missing_material',
+                                  'content': MATERIAL_GAP, 'citations': []}
+                                 for missing in item.get('missing_questions', []))
+            continue
+        if kind == 'general' and GREETING.fullmatch(question.strip()):
+            items.append({'question': question, 'status': 'general_answer', 'citations': [],
+                          'content': '你好，我是小八。有什么想了解的？'})
+            continue
+        try:
             try:
-                result = direct_model_answer(db, missing, official=kind in {'campus', 'general'})
-                items.append(result)
-                if result.get('missing_question'):
-                    items.append({'question': result['missing_question'], 'status': 'missing_material',
-                                  'content': '这部分仍未查到充分依据，已进入后台问题汇总。', 'citations': []})
-            except (ModelFailure, MissingEvidence, InvalidEvidence, TypeError, AttributeError):
-                items.append({'question': missing, 'status': 'missing_material', 'citations': [],
-                              'content': '知识库没有查到足够资料，DeepSeek 本次也未能完成联网或直接回答。'
-                              '问题已进入后台汇总，请稍后再试或向学院核实。'})
+                result = direct_model_answer(db, question)
+                if not result.get('web_sources'):
+                    raise MissingEvidence()
+            except (ModelFailure, MissingEvidence, InvalidEvidence):
+                result = web_answer(db, question, search_query=task.get('search_query'))
+            items.append(result)
+            if result.get('missing_question'):
+                items.append({'question': result['missing_question'], 'status': 'web_unavailable',
+                              'content': '这部分未查到可核实的公开资料。', 'citations': []})
+        except (ModelFailure, MissingEvidence, InvalidEvidence, TypeError, AttributeError):
+            items.append({'question': question, 'status': 'web_unavailable', 'citations': [],
+                          'content': '本次联网未查到可核实的信息，请稍后重试或补充具体问题。'})
     return {'items': items, 'context': resolved_context, 'model_mode': settings().model_mode,
             'notice': '制度答复请核对原文及适用范围；通用回答由模型生成。联网摘要附真实链接与查询日期，发布日期未知时不作推断。'}

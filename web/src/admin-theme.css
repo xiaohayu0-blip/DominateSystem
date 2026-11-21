@@ -168,3 +168,21 @@
   .admin-shell .stat-card { padding: 16px 12px; }
   .admin-login { padding: 22px 20px; }
 }
+.event-conversation ol {
+  padding-left: 1.5rem;
+}
+
+.event-conversation li {
+  margin-bottom: .75rem;
+  padding: .65rem .85rem;
+}
+
+.event-conversation .event-trigger {
+  border-inline-start: .25rem solid #a7613d;
+  background: #fff6eb;
+}
+
+.event-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

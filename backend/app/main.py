@@ -14,9 +14,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from . import models as m
-from .alerts import HELP_TEXT, create_alert, detect_danger, retention_preview
+from .alerts import HELP_TEXT, alert_mail_body, create_alert, detect_danger, retention_preview
 from .calendar_index import CALENDAR_NOTE, verified_calendar_parts
 from .config import settings
+from .conversation import QUESTION_EXAMPLES, example_answer
 from .db import SessionLocal, get_db, now
 from .qa import context_for
 from .progress import question_progress
@@ -223,9 +224,15 @@ def logout(request: Request, response: Response, db: DBSession = Depends(get_db)
     return logout_session(request, response, db, False)
 
 
+@app.get("/api/question-examples")
+def question_examples(person=Depends(user), db: DBSession = Depends(get_db)):
+    return [question for question in QUESTION_EXAMPLES if example_answer(db, question)]
+
+
 @app.post("/api/questions", status_code=202)
 def submit(data: QuestionInput, tasks: BackgroundTasks, person=Depends(user), db: DBSession = Depends(get_db)):
-    request_hash = hashlib.sha256(data.model_dump_json().encode()).hexdigest()
+    request_payload = data.model_dump_json(exclude={"conversation_id"} if data.conversation_id is None else None)
+    request_hash = hashlib.sha256(request_payload.encode()).hexdigest()
     existing = db.scalar(select(m.Question).where(m.Question.registration_id == person.id,
                                                   m.Question.request_id == data.request_id))
     if existing:
@@ -235,11 +242,15 @@ def submit(data: QuestionInput, tasks: BackgroundTasks, person=Depends(user), db
     previous = required(db, m.Question, data.previous_id) if data.previous_id else None
     if previous and previous.registration_id != person.id:
         raise HTTPException(404, "记录不存在或无权访问")
+    if previous and data.conversation_id and previous.context.get("conversation_id") not in (None, data.conversation_id):
+        raise HTTPException(409, "上一条提问属于其他会话")
     danger = detect_danger(data.text, previous.text if previous else "")
     if not danger:
         rate_limit("question:" + person.id, 12)
     context = context_for(data, previous)
     context["request_hash"] = request_hash
+    if data.conversation_id:
+        context["conversation_id"] = data.conversation_id
     if previous:
         context["previous_id"] = previous.id
     q = m.Question(registration_id=person.id, request_id=data.request_id, text=data.text,
@@ -628,17 +639,57 @@ def events(actor=Depends(admin), db: DBSession = Depends(get_db)):
         q = db.get(m.Question, e.question_id)
         job = db.scalar(select(m.MailJob).where(m.MailJob.event_id == e.id))
         attempts = list(db.scalars(select(m.MailAttempt).where(m.MailAttempt.job_id == job.id)))
-        result.append({"id": e.id, "question_id": q.id, "text": q.text, "snapshot": q.snapshot,
+        review = next((entry["review"] for entry in reversed(e.history) if entry.get("review")), "pending")
+        legacy_preview = job.body.lstrip().startswith("{")
+        result.append({"id": e.id, "question_id": q.id, "text": q.text, "snapshot": q.snapshot, "review": review,
                        "state": e.state, "history": e.history, "created_at": e.created_at,
-                       "mail": {"id": job.id, "mode": job.mode, "status": job.status, "body": job.body,
+                       "mail": {"id": job.id, "mode": job.mode, "status": job.status,
+                                "body": alert_mail_body(e, q) if legacy_preview else job.body,
+                                "legacy_preview": legacy_preview,
                                 "attempts": job.attempts, "error_code": job.error_code, "sent_at": job.sent_at,
                                 "attempt_history": [{"result": x.result, "at": x.created_at} for x in attempts]}})
     return result
 
 
+@app.get("/api/admin/events/{event_id}/conversation")
+def event_conversation(event_id: str, actor=Depends(admin), db: DBSession = Depends(get_db)):
+    event = required(db, m.EmergencyEvent, event_id)
+    trigger = required(db, m.Question, event.question_id)
+    conversation_id = trigger.context.get("conversation_id")
+    if conversation_id:
+        questions = db.scalars(select(m.Question).where(
+            m.Question.registration_id == trigger.registration_id,
+            m.Question.context["conversation_id"].as_string() == conversation_id,
+        ).order_by(m.Question.created_at, m.Question.id)).all()
+    else:
+        questions = [trigger]
+        seen = {trigger.id}
+        previous_id = trigger.context.get("previous_id")
+        while isinstance(previous_id, str) and previous_id not in seen:
+            previous = db.get(m.Question, previous_id)
+            if not previous or previous.registration_id != trigger.registration_id:
+                break
+            questions.append(previous)
+            seen.add(previous.id)
+            previous_id = previous.context.get("previous_id")
+        questions.reverse()
+    alerts = set(db.scalars(select(m.EmergencyEvent.question_id).where(
+        m.EmergencyEvent.question_id.in_([question.id for question in questions]))))
+    audit(db, actor, "event_conversation_view", event.id)
+    db.commit()
+    return {"complete": bool(conversation_id), "turns": [
+        {"id": q.id, "text": q.text, "created_at": q.created_at, "status": q.status,
+         "replies": [HELP_TEXT] if q.id in alerts else [
+             item["content"] for item in q.answer.get("items", []) if item.get("content")]}
+        for q in questions
+    ]}
+
+
 @app.patch("/api/admin/events/{event_id}")
 def handle_event(event_id: str, data: EventUpdate, actor=Depends(admin), db: DBSession = Depends(get_db)):
-    e = required(db, m.EmergencyEvent, event_id)
+    e = db.scalar(select(m.EmergencyEvent).where(m.EmergencyEvent.id == event_id).with_for_update())
+    if not e:
+        raise HTTPException(404, "记录不存在")
     e.state = data.state
     e.history = e.history + [{"at": now().isoformat(), "by": actor.username, **data.model_dump()}]
     audit(db, actor, "event_disposition", e.id, state=data.state)

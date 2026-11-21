@@ -87,7 +87,7 @@ def finish_question(question_id, factory=SessionLocal):
             report_progress("composing")
             resolved_context = answer.get("context", q.context)
             failed_items = [item for item in answer["items"] if item["status"] not in {
-                "answered", "historical_reference", "general_answer", "web_answer"}]
+                "answered", "historical_reference", "general_answer", "web_answer", "web_unavailable"}]
             if failed_items:
                 # End the retrieval transaction before acquiring the grouping lock.
                 db.rollback()

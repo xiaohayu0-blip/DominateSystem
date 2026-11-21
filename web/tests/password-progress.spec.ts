@@ -22,6 +22,7 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
     const path = new URL(route.request().url()).pathname
     if (path === '/api/me') return route.fulfill({ status: 401, json: { detail: '请登录' } })
     if (path === '/api/modes') return route.fulfill({ json: { environment: 'test', model: 'mock', material: 'synthetic', mail: 'mock' } })
+    if (path === '/api/question-examples') return route.fulfill({ json: [] })
     if (path === '/api/register') {
       registrations++
       return route.fulfill({ json: profile })
@@ -57,10 +58,9 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
     }
   })
   await page.goto('/')
-  await expect(page.locator('.tactile-art .octopus-mascot')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '管院 · 制度问答' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await page.screenshot({ path: `../docs/evidence/tactile-landing-${scenario.name}-20261117.png`, fullPage: true })
-  await page.getByRole('button', { name: '注册账号', exact: true }).click()
+  await page.getByRole('button', { name: '注册', exact: true }).click()
   await page.getByLabel('本人姓名 *', { exact: true }).fill(profile.name)
   await page.getByLabel('本人手机号 *', { exact: true }).fill(profile.phone)
   await page.getByLabel('专业 *', { exact: true }).fill(profile.major)
@@ -75,7 +75,6 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
   await page.getByRole('button', { name: '注册并进入问答' }).click()
   await expect(page.getByRole('textbox', { name: '你的问题' })).toBeVisible()
   expect(registrations).toBe(1)
-  await page.screenshot({ path: `../docs/evidence/tactile-chat-${scenario.name}-20261117.png`, fullPage: true })
   await page.getByRole('textbox', { name: '你的问题' }).fill(question.text)
   const lengths: number[] = []
   await page.exposeFunction('recordAnswerLength', (length: number) => lengths.push(length))
@@ -97,12 +96,10 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
     await expect(notice.locator('.progress-notice-dots i')).toHaveCount(3)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }
-  await page.screenshot({ path: `../docs/evidence/octopus-progress-${scenario.name}-20261117.png`, fullPage: true })
   await expect(page.locator('.answer-item .pre-wrap')).toHaveText('能加，先把条件看清楚 (｡•̀ᴗ-)✧\n需提交申请表和成绩单。')
   expect(lengths.some(length => length > 0 && length < answer.items[0].content.length)).toBe(true)
   await expect(page.getByRole('status')).toHaveCount(0)
   await expect(page.getByText('正在处理，请稍候…', { exact: true })).toHaveCount(0)
-  await page.screenshot({ path: `../docs/evidence/octopus-answer-${scenario.name}-20261117.png`, fullPage: true })
 })
 }
 

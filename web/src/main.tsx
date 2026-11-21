@@ -2,7 +2,7 @@ import { StrictMode, cloneElement, isValidElement, useId, useEffect, useRef, use
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { ArrowUpRight, ArrowUp, BookOpen, FileText, ChevronRight, ShieldCheck, LogOut, Plus, X, LayoutDashboard, Inbox, CalendarDays, Siren, Files, Users, Search, Menu, RefreshCw, CheckCircle2 } from 'lucide-react'
-import { api, ApiError, streamAnswer, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type Modes, type Answer, type History } from './api'
+import { api, ApiError, streamAnswer, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type EventConversation, type Review, type Modes, type Answer, type History } from './api'
 import { VocabularyPage } from './VocabularyPage'
 import './style.css'
 import './interface.css'
@@ -28,7 +28,7 @@ function Field({ title, children, hint, invalid = false }: { title: string; chil
   const id = useId()
   return <div className="field"><label htmlFor={id}>{title}</label>{isValidElement<{ id?: string; 'aria-invalid'?: boolean; 'aria-describedby'?: string }>(children) ? cloneElement(children, { id, 'aria-invalid': invalid || undefined, 'aria-describedby': hint ? id + '-hint' : undefined }) : children}{hint && <small id={id + '-hint'} className={invalid ? 'field-error' : undefined}>{hint}</small>}</div>
 }
-function HistoryList({ items }: { items: History[] }) { return <ol className="timeline">{items.map((h, i) => <li key={i}><small>{stamp(h.at)} · {h.by ?? '系统'} · {label[h.state ?? ''] ?? h.action}</small><p>{h.note}</p></li>)}</ol> }
+function HistoryList({ items }: { items: History[] }) { return <ol className="timeline">{items.map((h, i) => <li key={i}><small>{stamp(h.at)} · {h.by ?? '系统'} · {label[h.state ?? ''] ?? h.action}{h.review && " · " + reviewLabels[h.review]}</small><p>{h.note}</p></li>)}</ol> }
 function ProfileView({ person }: { person: Profile }) { return <div className="profile-detail"><span className="eyebrow">{person.role === 'parent' ? '家长自报资料' : '学生自报资料'}</span><p><strong>{person.name}</strong> · {person.phone}</p>{person.role === 'student' && <p>{person.major} / {person.class_name}</p>}{person.children.map((c, i) => <div className="child-summary" key={i}><b>孩子信息 {i + 1} · {c.name}</b><p>{c.major} / {c.class_name} · {c.phone}</p><small>填写关系：{c.relationship}（未核验）</small></div>)}</div> }
 
 function isAdminRoute() {
@@ -46,7 +46,7 @@ function App() {
     return () => removeEventListener('hashchange', change)
   }, [])
   useEffect(() => { api<Modes>('/modes').then(setModes).catch(() => setModes(null)) }, [])
-  return <><a className="skip-link" href="#main-content">跳至主要内容</a><div className="environment">{modes ? modes.environment === 'production' ? '管理学院制度信息服务' : <><span className="demo-label">演示环境</span><span>{modes.material === 'synthetic' ? '制度资料为合成样本，请勿作为实际办理依据。' : '请核对制度适用范围。'}</span><span className="mode-detail">{modes.model === 'mock' ? '模拟问答' : 'DeepSeek问答'}{modes.embedding?.startsWith('BAAI/') ? ' · BGE 检索' : ''} · {modes.mail === 'mock' ? '邮件不外发' : 'SMTP通道'}</span></> : '服务状态暂未确认，请检查网络连接。'}</div>{isAdmin ? <AdminApp/> : <UserApp/>}</>
+  return <><a className="skip-link" href="#main-content">跳至主要内容</a>{(isAdmin || (modes && modes.environment !== "production")) && <div className="environment">{modes ? modes.environment === 'production' ? '管理学院制度信息服务' : <><span className="demo-label">演示环境</span><span>{modes.material === 'synthetic' ? '制度资料为合成样本，请勿作为实际办理依据。' : '请核对制度适用范围。'}</span><span className="mode-detail">{modes.model === 'mock' ? '模拟问答' : 'DeepSeek问答'}{modes.embedding?.startsWith('BAAI/') ? ' · BGE 检索' : ''} · {modes.mail === 'mock' ? '邮件不外发' : 'SMTP通道'}</span></> : '服务状态暂未确认，请检查网络连接。'}</div>}{isAdmin ? <AdminApp/> : <UserApp/>}</>
 }
 
 const blankProfile = (): Profile => ({ role: 'student', name: '', phone: '', major: '', class_name: '', children: [] })
@@ -156,13 +156,15 @@ function IdentityCard({ profile, edit, logout }: { profile: Profile; edit: () =>
   )
 }
 
-function rebound(button: HTMLButtonElement) {
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-  button.animate([
-    { transform: 'scale(.96)' },
-    { transform: 'scale(1.045)', offset: .62 },
-    { transform: 'scale(1)' },
-  ], { duration: 280, easing: 'ease-out' })
+function PrivacyNotice() {
+  return <details className="privacy-notice">
+    <summary>隐私协议</summary>
+    <div className="privacy-content">
+      <p>本平台使用账号和登记资料提供管理学院制度问答服务。学生可修改姓名、联系方式、专业等登记信息。家长填写的孩子信息及关系为自行申报。</p>
+      <p>系统保存提问、答复和必要的操作记录，用于提供问答、补充制度资料及处理预警。授权管理员可查看相关登记资料和问答记录。触发危机预警时，系统可能通过配置的邮件通道通知工作人员核实。</p>
+      <p>问答功能可能将处理后的问题文本和必要的制度摘录提交给模型服务。请避免在提问中输入身份证号、密码或与咨询无关的个人信息。有关个人信息的查询、更正或处理请求，可向管理学院提出。</p>
+    </div>
+  </details>
 }
 
 function UserApp() {
@@ -171,93 +173,52 @@ function UserApp() {
   const [error, setError] = useState<unknown>(null)
   const [editing, setEditing] = useState(false)
   const [entryMode, setEntryMode] = useState<'register' | 'login' | null>(null)
-  const [notesOpen, setNotesOpen] = useState(() => window.matchMedia('(min-width: 761px)').matches)
-  useEffect(() => {
-    const desktop = window.matchMedia('(min-width: 761px)')
-    const syncNotes = (event: MediaQueryListEvent) => setNotesOpen(event.matches)
-    desktop.addEventListener('change', syncNotes)
-    return () => desktop.removeEventListener('change', syncNotes)
-  }, [])
   useEffect(() => { api<Profile>('/me').then(setProfile).catch(e => { if (!(e instanceof ApiError && e.status === 401)) setError(e) }).finally(() => setLoading(false)) }, [])
-  async function logout() { try { await api('/logout', 'POST'); setProfile(null); setEditing(false); setEntryMode(null); window.scrollTo(0, 0) } catch (e) { setError(e) } }
+  async function logout() {
+    try {
+      await api('/logout', 'POST')
+      setProfile(null)
+      setEditing(false)
+      setEntryMode(null)
+      window.scrollTo(0, 0)
+    } catch (e) { setError(e) }
+  }
   function editProfile() {
     setEditing(true)
     window.scrollTo(0, 0)
   }
   const chatProfile = !loading && !editing ? profile : null
-  const landing = !loading && !profile && !entryMode && !editing
-  const userSiteRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const site = userSiteRef.current
-    if (!landing || !site) return
-    const viewport = window.visualViewport
-    const fitLanding = () => {
-      const visibleHeight = viewport?.scale === 1 ? viewport.height : window.innerHeight
-      const pageTop = site.getBoundingClientRect().top + window.scrollY
-      site.style.setProperty('--landing-height', `${Math.max(0, Math.floor(visibleHeight - pageTop))}px`)
-    }
-    fitLanding()
-    window.addEventListener('resize', fitLanding)
-    viewport?.addEventListener('resize', fitLanding)
-    const banner = site.previousElementSibling
-    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(fitLanding) : null
-    if (banner) observer?.observe(banner)
-    return () => {
-      window.removeEventListener('resize', fitLanding)
-      viewport?.removeEventListener('resize', fitLanding)
-      observer?.disconnect()
-      site.style.removeProperty('--landing-height')
-    }
-  }, [landing])
-  return <div ref={userSiteRef} className={landing ? 'user-site user-site--landing' : 'user-site'}>
-    <div className={chatProfile ? 'user-header user-header--chat' : 'user-header'}>
-    <header className="site-header">
-      <a className="brand" href="#/" aria-label="管理学院制度服务首页"><span className="brand-icon"><OctopusMascot/></span><span>管理学院<small>制度服务平台</small></span></a>
-      <div className="header-actions"><nav className="public-nav" aria-label="网站导航"><a href="#/" aria-current="page">制度咨询</a><a href="#service-notes">使用说明</a></nav>{profile && <button className="text-button" onClick={logout}><LogOut size={16}/>退出</button>}</div>
-    </header>
-    {chatProfile && <div className="mobile-chat-profile"><IdentityCard profile={chatProfile} edit={editProfile} logout={logout}/></div>}
-    </div>
+  return <div className="user-site">
+    {profile && <div className={chatProfile ? 'user-header user-header--chat' : 'user-header'}>
+      <header className="site-header">
+        <a className="brand" href="/" aria-label="管院制度问答首页"><span className="brand-icon"><OctopusMascot/></span><span>管院 · 制度问答</span></a>
+        <button className="text-button" onClick={logout}><LogOut size={16}/>退出</button>
+      </header>
+      {chatProfile && <div className="mobile-chat-profile"><IdentityCard profile={chatProfile} edit={editProfile} logout={logout}/></div>}
+    </div>}
     <ErrorBox error={error}/>
-    {loading ? <main id="main-content" className="empty">正在连接服务…</main> : !profile || editing ? <main id="main-content" className={landing ? 'entry-layout entry-layout--landing' : 'entry-layout'}>
-      {!profile && <section className="page-intro account-intro" aria-labelledby="account-intro-title">
-        <h1 id="account-intro-title">制度咨询与办理指引</h1>
-        <p className="account-intro-kicker">管理学院 · 你的校园小助手</p>
-        <p>学生和家长可在这里查询学院制度，了解请假、综合测评和奖学金评定的办理条件。</p>
-        {landing && <>
-          <p>提问时可以注明业务年度。答复会列出引用的文件和条文位置，方便你核对原文及适用范围。</p>
-          <p>现有资料暂时无法回答的咨询会记录到工作台，供学院后续核对和补充。</p>
-        </>}
-      </section>}
-      <aside className="entry-intro" id="service-notes"><details className="service-disclosure" open={notesOpen} onToggle={e => setNotesOpen(e.currentTarget.open)}><summary>使用说明与服务范围<ChevronRight size={16}/></summary><div className="service-points">
-        <section><BookOpen size={21} strokeWidth={1.5}/><div><h3>查询制度依据</h3><p>回答附有来源与条文定位，请结合业务年度、入学年级核对。</p></div></section>
-        <section><FileText size={21} strokeWidth={1.5}/><div><h3>记录待处理问题</h3><p>资料不足或需要核实的问题将被记录，不自动向提问者发送通知。</p></div></section>
-        <section><ShieldCheck size={21} strokeWidth={1.5}/><div><h3>妥善使用登记信息</h3><p>资料由本人填写。仅凭手机号不能核验身份，也不能查询他人记录。</p></div></section>
-      </div><div className="boundary"><strong>服务范围</strong><p>本平台提供制度信息参考，不代替资格认定、审批或评审决定。</p></div></details>
-      {landing && <a className="landing-admin-link" href="#/admin">管理工作台 <ArrowUpRight size={12}/></a>}</aside>
-      <div className="account-entry">
-        {landing && <div className="tactile-art"><OctopusMascot className="landing-octopus"/></div>}
-        {landing && <ul className="account-intro-topics" aria-label="可咨询事项">
-          <li>学生请假</li><li>综合测评</li><li>奖学金评定</li>
-        </ul>}
-        {!profile && <div className="account-actions" aria-label="账号操作">
-          <button type="button" className="secondary account-action" aria-pressed={entryMode === 'register'} onClick={event => { rebound(event.currentTarget); setEntryMode('register') }}>注册账号</button>
-          <button type="button" className="primary account-action" aria-pressed={entryMode === 'login'} onClick={event => { rebound(event.currentTarget); setEntryMode('login') }}>登录账号</button>
-        </div>}
-        {(editing || entryMode) && <section className="entry-card">
-          <div className="section-heading">
-            <h2>{editing ? '修改登记资料' : entryMode === 'register' ? '注册信息' : '账号登录'}</h2>
-            {(editing || entryMode === 'register') && <p className="muted">请填写真实信息。</p>}
+    {loading ? <main id="main-content" className="empty">正在连接服务…</main>
+      : chatProfile ? <Chat profile={chatProfile} edit={editProfile}/>
+      : <main id="main-content" className="simple-entry">
+        {!profile && <>
+          <h1>管院 · 制度问答</h1>
+          <p>查询管理学院制度，了解请假、综测、奖学金等事项。</p>
+          <div className="account-actions" aria-label="账号操作">
+            <button type="button" className="primary account-action" aria-pressed={entryMode === 'login'} onClick={() => setEntryMode('login')}>登录</button>
+            <button type="button" className="secondary account-action" aria-pressed={entryMode === 'register'} onClick={() => setEntryMode('register')}>注册</button>
           </div>
+        </>}
+        {(editing || entryMode) && <section className="entry-card">
+          <h2>{editing ? '修改登记资料' : entryMode === 'register' ? '注册信息' : '账号登录'}</h2>
           {!profile && entryMode === 'login' && <UserLogin saved={setProfile}/>}
           {(editing || entryMode === 'register') && <RegistrationForm initial={editing && profile ? profile : undefined} saved={p => { setProfile(p); setEditing(false) }} cancel={editing ? () => setEditing(false) : undefined}/>}
         </section>}
-      </div>
-    </main> : <Chat profile={profile} edit={editProfile}/>}
-    <footer><div><strong>管理学院 · 制度服务平台</strong><span>回答仅供参考，请以适用的正式制度及学院审核结果为准。</span></div><a className="admin-link" href="#/admin">管理工作台 <ArrowUpRight size={14}/></a></footer>
+        {!profile && <PrivacyNotice/>}
+      </main>}
   </div>
 }
 
-function AnswerView({ answer, open }: { answer: Answer; open?: (c: Citation) => void }) {
+function AnswerView({ answer, open, student = false }: { answer: Answer; open?: (c: Citation) => void; student?: boolean }) {
   const sources = new Map<string, Citation>()
   for (const item of answer.items ?? []) {
     for (const citation of item.citations) {
@@ -267,8 +228,8 @@ function AnswerView({ answer, open }: { answer: Answer; open?: (c: Citation) => 
 
   return <>
     {answer.items?.map((item, i) => <section className="answer-item" key={i}>
-      <div className="answer-title"><Tag value={item.status}/><strong>{item.question}</strong></div>
-      <p className="pre-wrap">{item.content}</p>
+      <div className="answer-title">{!student && <Tag value={item.status}/>}<strong>{item.question}</strong></div>
+      <p className="pre-wrap">{student && item.status === "validation_failed" ? "暂时无法确认准确答案。请补充具体事项或适用年度后再试。" : item.content}</p>
       {item.web_sources?.map(source => <details key={source.id} className="citation">
         <summary><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
           <small>发布日期：{source.published_at ?? '未提供'} · 查询日期：{source.retrieved_at}</small></summary>
@@ -310,6 +271,13 @@ function newRequestId() {
 
 function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
   const [draft, setDraft] = useState('')
+  const [examples, setExamples] = useState<string[]>([])
+  const [conversationId] = useState(newRequestId)
+  useEffect(() => {
+    let active = true
+    api<string[]>('/question-examples').then(items => { if (active) setExamples(items) }).catch(() => {})
+    return () => { active = false }
+  }, [])
   const [questions, setQuestions] = useState<Question[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -379,14 +347,14 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
     try {
       const q = await api<Question>('/questions', 'POST', { request_id: requestId, text: draft,
         business_year: year ? Number(year) : null,
-        previous_id: follow && questions.length ? questions[questions.length - 1].id : null })
+        conversation_id: conversationId, previous_id: follow && questions.length ? questions[questions.length - 1].id : null })
       if (window.matchMedia('(max-width: 760px)').matches) composerRef.current?.querySelector('textarea')?.blur()
       setQuestions(old => [...old.filter(x => x.id !== optimisticId && x.id !== q.id), q]); setUnresolved(q.id)
       setDraft(''); setRequestId(newRequestId()); setShowConditions(false); if (!q.alert) await poll(q.id); else setUnresolved(null)
     } catch (e) { setQuestions(old => old.filter(x => x.id !== optimisticId)); setError(e) } finally { setBusy(false) }
   }
   async function open(c: Citation) { try { setSource(await api<Citation>('/sources/' + c.chunk_id)) } catch (e) { setError(e) } }
-  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>校园咨询</h1><p className="chat-description">查制度、聊知识，也可以轻松聊聊。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可连续追问办理条件、材料和时间；换个话题也能聊。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><OctopusMascot/><b>小八 · 校园问答</b><span>陪你把事情理清楚</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><OctopusMascot/></span><h2>今天想了解点什么？</h2><p>奖学金、请假、综测，或是学习生活，都可以聊 (｡•̀ᴗ-)✧</p><div className="suggestions"><span className="suggestion-label">提问示例</span>{['2026年度奖学金申请需要哪些材料？', '2026年度请假流程是什么？', '校外实习补贴如何申请？'].map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div></div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><ReplyHeader createdAt={q.created_at}/>{q.status === 'pending' ? <ProgressNotice stage={q.progress ?? 'received'}/> : <AnswerView answer={q.answer} open={open}/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>连续对话（自动判断话题）</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="想了解什么，问问小八…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? null : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <div className="modal-backdrop" onClick={() => setSource(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="引用来源" onClick={e => e.stopPropagation()}><button className="close" aria-label="关闭来源" onClick={() => setSource(null)} autoFocus><X/></button><span className="eyebrow">引用来源 / 原文摘录</span><h2>{source.title}</h2><p>{source.publisher ? source.publisher + ' · ' : ''}版本 {source.version}</p><div className="meta-strip">业务年度 {source.business_year ?? '长期'} / 入学年级 {source.admission_year ?? '不限'}<br/>有效期 {source.effective_from ?? '未限定'} 至 {source.effective_to ?? '未限定'}</div>{source.source_status !== 'published' && <p className="error">该版本已停用或不可用，以下为当时引用。</p>}<blockquote>{source.excerpt}</blockquote><small>仅展示你已引用的原文片段。完整附件由管理员审核访问。</small><button className="secondary" onClick={() => setSource(null)}>返回问答</button></section></div>}</main>
+  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>校园咨询</h1><p className="chat-description">查制度、聊知识，也可以轻松聊聊。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可连续追问办理条件、材料和时间；换个话题也能聊。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><OctopusMascot/><b>小八 · 校园问答</b><span>陪你把事情理清楚</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><OctopusMascot/></span><h2>今天想了解点什么？</h2><p>奖学金、请假、综测，或是学习生活，都可以聊<span className="welcome-emoticon">(｡•̀ᴗ-)✧</span></p>{examples.length > 0 && <div className="suggestions"><span className="suggestion-label">提问示例</span>{examples.map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div>}</div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><ReplyHeader createdAt={q.created_at}/>{q.status === 'pending' ? <ProgressNotice stage={q.progress ?? 'received'}/> : <AnswerView answer={q.answer} open={open} student/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>连续对话（自动判断话题）</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="想了解什么，问问小八…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? null : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <div className="modal-backdrop" onClick={() => setSource(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="引用来源" onClick={e => e.stopPropagation()}><button className="close" aria-label="关闭来源" onClick={() => setSource(null)} autoFocus><X/></button><span className="eyebrow">引用来源 / 原文摘录</span><h2>{source.title}</h2><p>{source.publisher ? source.publisher + ' · ' : ''}版本 {source.version}</p><div className="meta-strip">业务年度 {source.business_year ?? '长期'} / 入学年级 {source.admission_year ?? '不限'}<br/>有效期 {source.effective_from ?? '未限定'} 至 {source.effective_to ?? '未限定'}</div>{source.source_status !== 'published' && <p className="error">该版本已停用或不可用，以下为当时引用。</p>}<blockquote>{source.excerpt}</blockquote><small>仅展示你已引用的原文片段。完整附件由管理员审核访问。</small><button className="secondary" onClick={() => setSource(null)}>返回问答</button></section></div>}</main>
 }
 
 const sections = [
@@ -406,8 +374,8 @@ function AdminApp() {
     const data = new FormData(e.currentTarget)
     try { await api('/admin/login', 'POST', { username: data.get('username'), password: data.get('password') }); setAuth(true) } catch (e) { setError(e) } finally { setBusy(false) }
   }
-  if (!authenticated) return <div className="admin-entry"><main id="main-content" className="admin-login"><a className="text-button" href="#/">← 返回用户网站</a><div className="brand-icon"><OctopusMascot/></div><span className="eyebrow">管理学院 · 管理员入口</span><h1>管理工作台</h1><p className="muted">独立管理员认证。普通用户手机号不具备后台权限。</p><form onSubmit={login}><Field title="管理员账号"><input name="username" required autoComplete="username"/></Field><Field title="密码"><input name="password" required type="password" autoComplete="current-password" maxLength={200}/></Field><ErrorBox error={error}/><button className="primary" disabled={busy}>{busy ? '登录中…' : '登录工作台'}<ArrowUpRight size={18}/></button></form></main></div>
-  return <div className="admin-shell"><aside id="admin-navigation" className={'admin-sidebar ' + (drawer ? 'expanded' : '')}><a className="brand" href="#/admin"><span className="brand-icon"><OctopusMascot/></span><span>管院制度服务<small>小八 · 管理工作台</small></span></a><span className="sidebar-caption">管理导航</span><nav>{sections.map(([id, title, Icon]) => <button key={id} aria-current={activeSection === id ? 'page' : undefined} onClick={() => { setSection(id); setDrawer(false); setError(null) }}><Icon size={18}/>{title}{activeSection === id && <ChevronRight size={14}/>}</button>)}</nav><div className="sidebar-bottom"><p>完整联系方式仅限授权管理使用。</p><a href="#/">用户网站 <ArrowUpRight size={14}/></a><button className="text-button" onClick={async () => { try { await api('/admin/logout', 'POST'); setAuth(false) } catch (e) { setError(e) } }}><LogOut size={16}/>退出后台</button></div></aside><div className="admin-main"><header className="admin-top"><button className="mobile-menu" aria-label={drawer ? "收起管理菜单" : "展开管理菜单"} aria-expanded={drawer} aria-controls="admin-navigation" onClick={() => setDrawer(!drawer)}>{drawer ? <X/> : <Menu/>}</button><span>管理学院 / {sections.find(x => x[0] === activeSection)?.[1]}</span><button className="text-button" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={15}/>刷新数据</button></header><main id="main-content" className="admin-content"><div className="page-title"><div><span className="eyebrow">管理学院制度服务</span><h1>{sections.find(x => x[0] === activeSection)?.[1]}</h1></div><span className="muted">北京时间 · 后台处理</span></div><ErrorBox error={error}/><AdminSection key={section + refresh} section={section} navigate={setSection}/></main></div></div>
+  if (!authenticated) return <div className="admin-entry"><main id="main-content" className="admin-login"><a className="text-button" href="/">← 返回用户网站</a><div className="brand-icon"><OctopusMascot/></div><span className="eyebrow">管理学院 · 管理员入口</span><h1>管理工作台</h1><p className="muted">独立管理员认证。普通用户手机号不具备后台权限。</p><form onSubmit={login}><Field title="管理员账号"><input name="username" required autoComplete="username"/></Field><Field title="密码"><input name="password" required type="password" autoComplete="current-password" maxLength={200}/></Field><ErrorBox error={error}/><button className="primary" disabled={busy}>{busy ? '登录中…' : '登录工作台'}<ArrowUpRight size={18}/></button></form></main></div>
+  return <div className="admin-shell"><aside id="admin-navigation" className={'admin-sidebar ' + (drawer ? 'expanded' : '')}><a className="brand" href="/admin"><span className="brand-icon"><OctopusMascot/></span><span>管院制度服务<small>小八 · 管理工作台</small></span></a><span className="sidebar-caption">管理导航</span><nav>{sections.map(([id, title, Icon]) => <button key={id} aria-current={activeSection === id ? 'page' : undefined} onClick={() => { setSection(id); setDrawer(false); setError(null) }}><Icon size={18}/>{title}{activeSection === id && <ChevronRight size={14}/>}</button>)}</nav><div className="sidebar-bottom"><p>完整联系方式仅限授权管理使用。</p><a href="/">用户网站 <ArrowUpRight size={14}/></a><button className="text-button" onClick={async () => { try { await api('/admin/logout', 'POST'); setAuth(false) } catch (e) { setError(e) } }}><LogOut size={16}/>退出后台</button></div></aside><div className="admin-main"><header className="admin-top"><button className="mobile-menu" aria-label={drawer ? "收起管理菜单" : "展开管理菜单"} aria-expanded={drawer} aria-controls="admin-navigation" onClick={() => setDrawer(!drawer)}>{drawer ? <X/> : <Menu/>}</button><span>管理学院 / {sections.find(x => x[0] === activeSection)?.[1]}</span><button className="text-button" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={15}/>刷新数据</button></header><main id="main-content" className="admin-content"><div className="page-title"><div><span className="eyebrow">管理学院制度服务</span><h1>{sections.find(x => x[0] === activeSection)?.[1]}</h1></div><span className="muted">北京时间 · 后台处理</span></div><ErrorBox error={error}/><AdminSection key={section + refresh} section={section} navigate={setSection}/></main></div></div>
 }
 
 function Load<T>({ path, children, autoRefresh = false }: { path: string; children: (data: T, reload: () => void) => ReactNode; autoRefresh?: boolean }) {
@@ -534,28 +502,106 @@ function KnowledgePage({ uploadLimitMb }: { uploadLimitMb: number }) {
     }
   }
 
-  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析并发布，能识别的业务年度会自动填入。上传结果会显示处理状态。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pptx,.xlsx,.zip,.pdf,.docx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传、识别与发布…' : '上传资料'}</button></form><small>支持 PPTX / XLSX / ZIP / PDF / DOCX / CSV，单次上传不超过 {uploadLimitMb} MB。ZIP 最多导入 20 份资料。自动识别扫描页及文档内的图片文字，处理成功后直接发布。</small></div>{notice && <p role="status">{notice}</p>}<ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{docs => docs.length ? docs.map(d => <DocumentCard key={d.id} document={d}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
+  return <><div className="panel upload-panel"><div><h3>制度资料管理</h3><p>上传后自动解析并发布，能识别的业务年度会自动填入。上传结果会显示处理状态。</p></div><form onSubmit={upload}><input aria-label="选择制度文件" type="file" name="file" accept=".pptx,.xlsx,.zip,.pdf,.docx,.csv" required/><button className="primary" disabled={busy}>{busy ? '正在上传、识别与发布…' : '上传资料'}</button></form><small>支持 PPTX / XLSX / ZIP / PDF / DOCX / CSV，单次上传不超过 {uploadLimitMb} MB。ZIP 最多导入 20 份资料。自动识别扫描页及文档内的图片文字，处理成功后直接发布。</small></div>{notice && <p role="status">{notice}</p>}<ErrorBox error={error}/><Load<Doc[]> key={generation} path="/admin/documents">{(docs, reload) => docs.length ? docs.map(d => <DocumentCard key={d.id} document={d} reload={reload}/>) : <Empty text="还没有资料，请上传制度文件。"/>}</Load></>
 }
 
-function DocumentCard({ document: d }: { document: Doc }) {
+function DocumentCard({ document: d, reload }: { document: Doc; reload: () => void }) {
+  const [doc, setDoc] = useState(d)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const disable = doc.status === 'published'
+  const actionLabel = disable ? '停用' : '重新启用'
+  async function changePublication() {
+    if (!confirm(disable ? '停用后，新问答将不再引用这份资料。确认停用？' : '确认重新启用这份资料？')) return
+    setBusy(true)
+    setError(null)
+    try {
+      setDoc(await api<Doc>('/admin/documents/' + doc.id + (disable ? '/disable' : '/publish'), 'POST'))
+      reload()
+    } catch (e) { setError(e) } finally { setBusy(false) }
+  }
   return <article className="panel document-card">
-    <div className="tag-row"><Tag value={d.status}/><Tag value={d.parse_status}/></div>
-    <h3>{d.title}</h3>
-    <small>版本 {d.version} · {d.business_year ?? '长期'} · 资料编号 <code>{d.id}</code></small>
+    <div className="tag-row"><Tag value={doc.status}/><Tag value={doc.parse_status}/></div>
+    <h3>{doc.title}</h3>
+    <small>版本 {doc.version} · {doc.business_year ?? '长期'} · 资料编号 <code>{doc.id}</code></small>
+    {doc.parse_status === 'ready' && (disable || doc.status === 'disabled') && <div className="actions">
+      <button className="secondary" type="button" disabled={busy} onClick={changePublication}>{actionLabel}</button>
+    </div>}
+    <ErrorBox error={error}/>
   </article>
 }
 
+const reviewLabels: Record<Review, string> = {
+  pending: '待核实', needs_followup: '确认需跟进', false_alarm: '误报', undetermined: '暂无法判断',
+}
+
 function EventsPage() {
-  return <><p className="boundary">识别可能误报或漏报。邮件状态与人工处置分别记录；模拟邮件不会外发。投递不确定的任务需人工核对邮箱，系统不会自动重复发送。</p><Load<Emergency[]> path="/admin/events">{(events, reload) => { const visibleEvents = events.filter(event => event.state === 'open' || event.state === 'following'); return visibleEvents.length ? visibleEvents.map(e => <EventCard key={e.id} event={e} reload={reload}/>) : <Empty text="没有待处理或跟进中的紧急事件。"/> }}</Load></>
+  const [showClosed, setShowClosed] = useState(false)
+  return <>
+    <p className="boundary">邮件状态、人工核实和后续处置分别记录。</p>
+    <label className="checkbox"><input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)}/>显示已关闭事件</label>
+    <Load<Emergency[]> path="/admin/events">{(events, reload) => {
+      const visibleEvents = events.filter(event => showClosed || event.state !== 'closed')
+      return visibleEvents.length ? visibleEvents.map(e => <EventCard key={e.id} event={e} reload={reload}/>)
+        : <Empty text="没有符合条件的紧急事件。"/>
+    }}</Load>
+  </>
 }
 
 function EventCard({ event: e, reload }: { event: Emergency; reload: () => void }) {
   const [state, setState] = useState(e.state)
+  const [review, setReview] = useState<Review>(e.review ?? 'pending')
   const [note, setNote] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
-  async function action(retry = false) { setBusy(true); setError(null); try { await api('/admin/events/' + e.id + (retry ? '/retry' : ''), retry ? 'POST' : 'PATCH', retry ? undefined : { state, note }); reload() } catch (e) { setError(e) } finally { setBusy(false) } }
-  return <details className="panel event-card"><summary><div><div className="tag-row"><Tag value={e.state}/><Tag value={e.mail.status}/><Tag value={e.mail.mode === 'mock' ? '模拟通道' : 'SMTP'}/></div><h3>{e.text}</h3><small>{stamp(e.created_at)} · 事件 {e.id.slice(0, 8)}</small></div><Siren size={22}/></summary><ProfileView person={e.snapshot}/><details className="source-preview"><summary>邮件正文预览</summary><pre>{e.mail.body}</pre></details><p>尝试次数 {e.mail.attempts} · {e.mail.error_code || '暂无错误'} </p>{e.mail.attempt_history.map((a, i) => <p className="muted" key={i}>{stamp(a.at)} · {label[a.result] ?? a.result}</p>)}<HistoryList items={e.history}/><form onSubmit={ev => { ev.preventDefault(); void action() }}><Field title="人工处置状态"><select value={state} onChange={ev => setState(ev.target.value)}>{['open', 'following', 'closed'].map(s => <option key={s} value={s}>{label[s]}</option>)}</select></Field><Field title="处置记录 *"><textarea value={note} maxLength={4000} required onChange={ev => setNote(ev.target.value)}/></Field><ErrorBox error={error}/><div className="actions"><button disabled={busy} className="primary"><CheckCircle2 size={16}/>记录人工处置</button>{['failed', 'unconfigured', 'retry'].includes(e.mail.status) && <button className="secondary" type="button" disabled={busy} onClick={() => { if (e.mail.mode === 'mock' || confirm('此操作将重试真实邮件任务，确认继续？')) void action(true) }}>{e.mail.mode === 'mock' ? '模拟重试' : '重试邮件'}</button>}</div></form></details>
+  const [expanded, setExpanded] = useState(false)
+  async function action(retry = false) {
+    setBusy(true)
+    setError(null)
+    try {
+      await api('/admin/events/' + e.id + (retry ? '/retry' : ''), retry ? 'POST' : 'PATCH', retry ? undefined : { state, review, note })
+      if (!retry) setNote('')
+      reload()
+    } catch (e) { setError(e) } finally { setBusy(false) }
+  }
+  return <details className="panel event-card" onToggle={event => setExpanded(event.currentTarget.open)}>
+    <summary><div><div className="tag-row"><Tag value={e.state}/><Tag value={e.mail.status}/><Tag value={reviewLabels[e.review] ?? reviewLabels.pending}/></div>
+      <h3>{e.text}</h3><small>{stamp(e.created_at)} · 事件 {e.id.slice(0, 8)}</small></div><Siren size={22}/></summary>
+    <ProfileView person={e.snapshot}/>
+    {expanded && <Load<EventConversation> path={'/admin/events/' + e.id + '/conversation'}>{conversation => <section className="event-conversation">
+      <h4>完整会话上下文</h4>
+      {!conversation.complete && <p className="muted">历史上下文不完整，以下为可关联的记录。</p>}
+      <ol>{conversation.turns.map(turn => <li key={turn.id} className={turn.id === e.question_id ? 'event-trigger' : undefined}>
+        <small>{stamp(turn.created_at)}{turn.id === e.question_id && ' · 触发预警'}</small>
+        <p className="pre-wrap"><b>用户</b> {turn.text}</p>
+        {turn.replies.map((reply, index) => <p key={index} className="pre-wrap"><b>小八</b> {reply}</p>)}
+        {turn.status === 'pending' && <p className="muted">答复处理中</p>}
+      </li>)}</ol>
+    </section>}</Load>}
+    <details className="source-preview"><summary>邮件正文预览</summary>
+      {e.mail.legacy_preview && <p className="muted">按当前模板呈现旧事件。此前发送的邮件内容以收件记录为准。</p>}
+      <pre>{e.mail.body}</pre>
+    </details>
+    <p>邮件通道 {e.mail.mode === 'mock' ? '模拟' : 'SMTP'} · 尝试次数 {e.mail.attempts} · {e.mail.error_code || '暂无错误'}</p>
+    {e.mail.attempt_history.map((a, i) => <p className="muted" key={i}>{stamp(a.at)} · {label[a.result] ?? a.result}</p>)}
+    <HistoryList items={e.history}/>
+    <form onSubmit={ev => { ev.preventDefault(); void action() }}>
+      <Field title="人工核实结论"><select value={review} onChange={ev => setReview(ev.target.value as Review)}>
+        {Object.entries(reviewLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
+      </select></Field>
+      <Field title="处置进度"><select value={state} onChange={ev => setState(ev.target.value)}>
+        {['open', 'following', 'closed'].map(value => <option key={value} value={value}>{label[value]}</option>)}
+      </select></Field>
+      <Field title="核实或处置备注 *"><textarea value={note} maxLength={4000} required onChange={ev => setNote(ev.target.value)}/></Field>
+      <ErrorBox error={error}/>
+      <div className="actions"><button disabled={busy} className="primary"><CheckCircle2 size={16}/>保存核实和处置</button>
+        {['failed', 'unconfigured', 'retry'].includes(e.mail.status) && <button className="secondary" type="button" disabled={busy}
+          onClick={() => { if (e.mail.mode === 'mock' || confirm('此操作将重试真实邮件任务，确认继续？')) void action(true) }}>
+          {e.mail.mode === 'mock' ? '模拟重试' : '重试邮件'}
+        </button>}
+      </div>
+    </form>
+  </details>
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>)
