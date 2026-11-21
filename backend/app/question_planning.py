@@ -16,6 +16,22 @@ ALL_BRANCH_REPLY = re.compile(
 )
 
 
+def named_branch_reply(text: str, options: list[str]) -> str | None:
+    """Recognize a short reply naming exactly one of the offered branches."""
+    reply = text.strip().rstrip("？?。！!")
+    reply = re.sub(r"^(?:那就|那么|我选|我想问|我想了解|就是|那)\s*", "", reply)
+    if reply in options:
+        return reply
+    reply = re.sub(r"(?:这一种|这种|这一类|这类|那种|吧|呢|呀|啊)$", "", reply).strip()
+    if not re.fullmatch(r"[\u4e00-\u9fff]{2,10}", reply):
+        return None
+    aliases = {"病假": "因病", "事假": "因事"}
+    term = aliases.get(reply, reply)
+    matches = [option for option in options if option == reply or option.startswith(term)
+               or aliases.get(option) == term]
+    return matches[0] if len(matches) == 1 else None
+
+
 def question_clauses(text: str) -> list[str]:
     # These boundaries only number pieces of input; the model decides their relationship.
     return [part.strip(" \t\r") for part in re.split(

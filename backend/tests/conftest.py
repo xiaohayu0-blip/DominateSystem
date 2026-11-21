@@ -39,6 +39,14 @@ def simulated_question_planner(monkeypatch):
     monkeypatch.setattr(conversation, "plan_turn", lambda db, text, context: [
         {"question": text, "kind": "campus"}])
     monkeypatch.setattr(conversation, "search_web", lambda *args, **kwargs: [])
+    original_model_json = conversation.model_json
+
+    def simulate_composition(db, system, payload):
+        if "verified_facts" in payload:
+            return {"answer": payload["verified_facts"]}
+        return original_model_json(db, system, payload)
+
+    monkeypatch.setattr(conversation, "model_json", simulate_composition)
 
 
 @pytest.fixture(autouse=True)

@@ -9,9 +9,82 @@ from app.config import settings
 from app.db import SessionLocal
 from app.qa import DeepSeekModel, ModelFailure, context_for
 from app.schemas import QuestionInput
+from conftest import signup, student
+from test_knowledge import ask, publish
 
 real_search = chat.search_web
 real_plan = chat.plan_turn
+
+
+@pytest.mark.parametrize('reply', ['因病', '病假', '那就因病吧'])
+def test_sick_leave_short_answer_resumes_original_question_and_cites_rule(client, monkeypatch, reply):
+    signup(client, student())
+    question = '请假要交哪些材料？'
+    rule = '学生请事假的，应提供请假事由的证明材料。学生请病假的，应提供校医院出具的病假证明材料。学生请公假的，应当由组织单位提供证明。'
+    doc_id = publish('武汉纺织大学学生考勤管理办法', rule)
+    expected = '请病假需要提交校医院出具的病假证明。'
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', real_plan)
+
+    def model(self, system, payload):
+        if 'current_question' in payload:
+            if payload['current_question'] == question:
+                return {'tasks': [{'kind': 'campus', 'question': question, 'clauses': [0],
+                                   'clarify_options': ['因病请假', '因事请假', '公假']}]}
+            return {'tasks': [{'kind': 'general', 'question': reply, 'clauses': [0]}]}
+        assert '请假要交哪些材料' in payload['question'] and '因病请假' in payload['question']
+        source = next(item for item in payload['untrusted_evidence'] if item['document_id'] == doc_id)
+        return {'answer': expected, 'selections': [{'chunk_id': source['chunk_id'],
+                'quote': '学生请病假的，应提供校医院出具的病假证明材料。'}]}
+
+    monkeypatch.setattr(DeepSeekModel, 'request_json', model)
+    first = ask(client, question)
+    assert first['answer']['items'][0]['status'] == 'needs_clarification'
+    item, = ask(client, reply, previous_id=first['id'])['answer']['items']
+    assert item['status'] == 'answered' and item['content'] == expected
+    assert {source['document_id'] for source in item['citations']} == {doc_id}
+
+
+@pytest.mark.parametrize('question,options,short,selected', [
+    ('补办学生证要带什么？', ['本人办理', '委托办理'], '本人', '本人办理'),
+    ('转专业要准备什么材料？', ['校内转专业', '跨校转入'], '校内', '校内转专业'),
+])
+def test_short_branch_reply_keeps_other_campus_topics(monkeypatch, question, options, short, selected):
+    context = {'business_year': 2026, 'previous_branch': {
+        'kind': 'topic_branch', 'question': question, 'options': options, 'scope': {'business_year': 2025},
+    }}
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', lambda *args: pytest.fail('唯一匹配的选项无需再分流'))
+
+    def policy(db, text, scope):
+        assert question in text and selected in text
+        assert scope['business_year'] == 2025
+        return {'items': [{'question': text, 'status': 'answered', 'content': '按所选办理方式提交材料。'}]}
+
+    monkeypatch.setattr(chat, 'policy_answer', policy)
+    item, = chat.answer_turn(None, short, context)['items']
+    assert item['status'] == 'answered'
+
+
+def test_ambiguous_short_branch_reply_is_not_guessed(monkeypatch):
+    context = {'previous_branch': {'kind': 'topic_branch', 'question': '复学怎么办理？',
+               'options': ['因病休学后复学', '因病保留学籍后入学'], 'scope': {}}}
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', lambda db, text, ctx: [{
+        'kind': 'campus', 'question': context['previous_branch']['question'],
+        'clarify_options': ctx['previous_branch']['options'],
+    }])
+    item, = chat.answer_turn(None, '因病', context)['items']
+    assert item['status'] == 'needs_clarification'
+
+
+def test_retry_can_reuse_pending_choice_after_failed_reply():
+    pending = {'kind': 'topic_branch', 'question': '请假要交哪些材料？',
+               'options': ['因病请假', '因事请假', '公假'], 'scope': {'business_year': 2025}}
+    previous = SimpleNamespace(text='因病', context={'previous_branch': pending},
+                               answer={'items': [{'status': 'validation_failed'}]})
+    retry = QuestionInput(request_id='branch-retry-0001', text='因病')
+    assert context_for(retry, previous)['previous_branch'] == pending
 
 
 def plan(monkeypatch, tasks):
@@ -150,16 +223,15 @@ def test_web_answer_uses_supported_source_numbers_and_keeps_links(monkeypatch):
         assert answer['items'][0]['web_sources'][0]['url'] == url
         message['content'] = '开放30个申请名额，仅限大二学生。'
         failed = chat.answer_turn(db, '最新发布', {})
-        assert failed['items'][0]['status'] == 'web_answer'
-        assert '3个申请名额' in failed['items'][0]['content'] and '30个' not in failed['items'][0]['content']
+        assert failed['items'][0]['status'] == 'web_unavailable'
+        assert '30个' not in failed['items'][0]['content']
 
 
-def test_general_answer_rewrites_over_limit_and_does_not_truncate(monkeypatch):
-    answers = iter([{'answer': '字' * 501}, {'answer': '机会成本是放弃的最佳替代选择的价值 😊'}])
-    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: next(answers))
+def test_general_answer_preserves_model_text_without_character_cutoff(monkeypatch):
+    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *args: {'answer': '字' * 501})
     with SessionLocal() as db:
         answer = chat.general_answer(db, '解释机会成本', {})
-    assert answer['content'].endswith('😊')
+    assert answer['content'] == '字' * 501
 
 
 def test_history_is_bounded_and_scrubbed():
@@ -269,7 +341,7 @@ def test_multiple_leave_types_keep_local_conclusion_and_search_only_missing_type
                        'branches': ['因病请假', '因事请假']}])
 
     def policy(db, text, scope):
-        assert scope['_aggregate_branches']
+        assert scope['_branch_options'] == ['因病请假', '因事请假']
         return {'items': [{'question': text, 'status': 'answered', 'content': '因病请假：提交诊断证明。',
                            'citations': [], 'missing_questions': ['因事请假要交什么材料？']}]}
 
@@ -280,8 +352,13 @@ def test_multiple_leave_types_keep_local_conclusion_and_search_only_missing_type
 
     monkeypatch.setattr(chat, 'policy_answer', policy)
     monkeypatch.setattr(chat, 'find_web_answer', search)
+    def compose(db, system, payload):
+        assert '诊断证明' in payload['verified_facts'] and '请假申请' in payload['verified_facts']
+        return {'answer': '因病请假交诊断证明。\n因事请假交请假申请。'}
+
+    monkeypatch.setattr(chat, 'model_json', compose)
     item, = chat.answer_turn(None, question, {})['items']
-    assert item['content'] == '因病请假：提交诊断证明。\n因事请假：提交请假申请。'
+    assert item['content'] == '因病请假交诊断证明。\n因事请假交请假申请。'
     assert item['web_sources']
 
 

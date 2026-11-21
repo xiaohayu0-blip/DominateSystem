@@ -15,7 +15,7 @@ from .qa import (calendar_overview_answer, calendar_period, DeepSeekModel, Inval
                  YEAR_WORD, GRADE_WORD,
                  TECHNICAL_LIMIT_QUESTION, answer_question as policy_answer,
                  cited_answer, is_dependent_question, model_budget_available, semaphore, verified_excerpts)
-from .question_planning import ALL_BRANCH_REPLY, grouped_questions, question_clauses
+from .question_planning import ALL_BRANCH_REPLY, grouped_questions, named_branch_reply, question_clauses
 from .schemas import scrub
 from .competition_catalog import competition_classification
 from .ranking import ranking_answer
@@ -260,7 +260,7 @@ def general_answer(db, question, context):
 
 def render_web_answer(content, sources, *, question, summary_only=False):
     evidence = [{'chunk_id': source['id'], 'document_id': source['url'],
-                 'excerpt': source['excerpt'], 'title': source['title'],
+                 'excerpt': f"{source['excerpt']}\n{source['url']}", 'title': source['title'],
                  'admission_year': None, 'location': source['url']} for source in sources]
     result = {'answer': content, 'selections': [
         {'chunk_id': source['chunk_id'], 'quote': source['excerpt']} for source in evidence]}
@@ -411,11 +411,19 @@ def prepare_turn(db, text, context):
     if TECHNICAL_LIMIT_QUESTION.search(text):
         return policy_answer(db, text, context)
     previous_branch = context.get('previous_branch')
+    previous_choice = None
+    if previous_branch:
+        choice = award_choice(text)
+        previous_choice = (choice if choice in previous_branch['options'] else
+                           named_branch_reply(text, previous_branch['options']))
     mock = settings().model_mode == 'mock'
     fallback_awards = requested_award_amounts(text)
     fallback_all = bool(previous_branch and ALL_BRANCH_REPLY.fullmatch(text.strip()))
     request = scholarship_request(context.get('followup_question') or text)
-    if mock:
+    if previous_choice:
+        tasks = [{'question': text, 'kind': 'campus', 'branch_action': 'select_previous',
+                  'branches': [previous_choice]}]
+    elif mock:
         if not (fallback_all or fallback_awards):
             return policy_answer(db, text, context)
         tasks = [{'question': text, 'kind': 'campus',
@@ -447,7 +455,7 @@ def prepare_turn(db, text, context):
         branches = task.get('branches', [])
         branch_question = question
         if previous_branch and kind == 'campus':
-            exact_choice = award_choice(original) or original.strip().rstrip('？?。！!')
+            exact_choice = award_choice(original) or named_branch_reply(original, previous_branch['options'])
             if exact_choice in previous_branch['options']:
                 action, branches = 'select_previous', [exact_choice]
             elif len(tasks) == 1 and fallback_all:

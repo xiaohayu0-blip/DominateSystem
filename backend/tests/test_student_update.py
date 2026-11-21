@@ -48,10 +48,10 @@ def test_unsourced_general_information_is_not_presented_as_answer(monkeypatch):
 
 
 @pytest.mark.parametrize('question', ['你是谁', '小八，你叫什么名字？', '你好！'])
-def test_assistant_introduction_works_without_model_or_search(monkeypatch, question):
+def test_assistant_introduction_uses_model_without_routing_or_search(monkeypatch, question):
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     def unexpected(*args, **kwargs):
-        raise AssertionError('简单自我介绍不需要模型或联网')
+        raise AssertionError('简单自我介绍不需要分流或联网')
     monkeypatch.setattr(conversation, 'plan_turn', unexpected)
     monkeypatch.setattr(conversation, 'direct_model_answer', unexpected)
     answer = conversation.answer_turn(None, question, {})
@@ -200,7 +200,7 @@ def test_national_scholarship_dual_ranking_requirements_quote_complete_rule(clie
     assert item['citations'][0]['document_id'] == doc_id
 
 
-def test_policy_amount_uses_original_excerpt_without_a_second_model_call(client, monkeypatch):
+def test_policy_amount_retries_and_shows_corrected_model_reply(client, monkeypatch):
     from app.qa import DeepSeekModel
 
     signup(client, student())
@@ -211,13 +211,13 @@ def test_policy_amount_uses_original_excerpt_without_a_second_model_call(client,
 
     def single_reply(_, query, evidence, *, retry=False):
         calls.append(retry)
-        return {'answer': '小八查到啦，补贴为800元。',
+        return {'answer': '每人每年600元，休学时停发。' if retry else '小八查到啦，补贴为800元。',
                 'selections': [{'chunk_id': evidence[0]['chunk_id'], 'quote': '模型改写过的摘录'}]}
 
     monkeypatch.setattr(DeepSeekModel, 'select_evidence', single_reply)
     item, = ask(client, '特殊课程补贴有多少钱？')['answer']['items']
-    assert calls == [False] and item['status'] == 'answered'
-    assert rule in item['content'] and '800元' not in item['content']
+    assert calls == [False, True] and item['status'] == 'answered'
+    assert item['content'] == '每人每年600元，休学时停发。'
     assert item['citations'][0]['document_id'] == doc_id
 
 

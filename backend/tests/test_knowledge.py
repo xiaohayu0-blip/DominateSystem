@@ -280,7 +280,7 @@ def test_score_is_displayed_from_source(client, monkeypatch, generated_score):
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
 
     def model_answer(_, query, evidence, *, retry=False):
-        return {"answer": f"德育素质积分基准为{generated_score}分。",
+        return {"answer": f"德育素质积分基准为{15 if retry else generated_score}分。",
                 "selections": [{"chunk_id": evidence[0]["chunk_id"], "quote": quote}]}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
@@ -308,22 +308,22 @@ def test_deepseek_summarizes_verified_excerpts_without_inventing_numbers(client,
     summary = correct_summary
     recover_on_retry = False
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert original in item["content"]
+    assert item["content"] == correct_summary
     assert item["citations"][0]["excerpt"] == original
 
     selected_quote = quote.replace("0.3", "0.5")
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "answered" and original in item["content"]
+    assert item["status"] == "answered" and item["content"] == correct_summary
     assert item["citations"][0]["excerpt"] == original
 
     selected_quote = quote
     summary = correct_summary.replace("0.3", "0.5")
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "answered" and original in item["content"] and "0.5分" not in item["content"]
+    assert item["status"] == "validation_failed" and "0.5分" not in item["content"]
 
     recover_on_retry = True
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "answered" and original in item["content"] and item["citations"]
+    assert item["status"] == "answered" and item["content"] == correct_summary and item["citations"]
 
 
 def test_assessment_distinguishes_question_percentage_from_policy_threshold(client, monkeypatch):

@@ -69,7 +69,9 @@ def test_model_reply_is_preserved_with_sources(client, monkeypatch, year):
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "奖学金申请材料")["answer"]["items"][0]
     assert calls == [False] and item["status"] in {"answered", "historical_reference"}
-    assert item["content"] == quote * 30
+    assert item["content"].endswith(quote * 30)
+    if year is not None:
+        assert f"{year}年资料" in item["content"]
 
 
 def test_long_evidence_and_original_links_are_allowed_with_short_answer(client, monkeypatch):
