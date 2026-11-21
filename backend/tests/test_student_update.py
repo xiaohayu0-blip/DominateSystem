@@ -1,5 +1,7 @@
+import json
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy import select
 
@@ -18,16 +20,16 @@ from test_knowledge import ask, publish
     ('奖学金有多少', 'campus'),
     ('帮我联网确认我们学院的奖学金有多少？', 'web'),
 ])
-def test_campus_material_gap_checks_official_web_and_discloses_unverified_result(monkeypatch, question, classified_as):
+def test_campus_material_gap_discloses_the_absence_of_verified_search_sources(monkeypatch, question, classified_as):
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     monkeypatch.setattr(conversation, 'plan_turn', lambda *args: [
         {'kind': classified_as, 'question': question}])
     monkeypatch.setattr(conversation, 'policy_answer', lambda *args: {'items': [
         {'question': question, 'status': 'missing_material', 'content': '缺少依据', 'citations': []}]})
-    def official_only(db, text, *, official):
-        assert official and text == question
+    def native_search(db, text, *, campus_gap):
+        assert campus_gap and text == question
         raise conversation.MissingEvidence()
-    monkeypatch.setattr(conversation, 'direct_model_answer', official_only)
+    monkeypatch.setattr(conversation, 'direct_model_answer', native_search)
     item, = conversation.answer_turn(None, question, {})['items']
     assert item['status'] == 'missing_material'
     assert '知识库暂时没有' in item['content'] and '暂未找到能核实' in item['content']
@@ -77,19 +79,32 @@ def test_light_conversation_uses_the_chat_model_without_search(monkeypatch):
     '我们学校是哪一年建校的？',
     '武汉纺织大学的校史是什么？',
 ])
-def test_public_school_profile_discloses_knowledge_gap_and_searches_official_web(monkeypatch, question):
+def test_public_school_profile_uses_native_search_and_accepts_non_school_sources(monkeypatch, question):
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     monkeypatch.setattr(conversation, 'plan_turn', lambda *args: [{'kind': 'web', 'question': question}])
     monkeypatch.setattr(conversation, 'policy_answer', lambda *args, **kwargs: {'items': [
         {'question': question, 'status': 'missing_material', 'content': '暂无资料', 'citations': []}]})
-    monkeypatch.setattr(conversation, 'direct_model_answer', lambda *args, **kwargs: {
-        'question': question, 'status': 'general_answer', 'content': '无出处答案', 'citations': []})
-    def verified_web(db, text, *, official, search_query=None):
-        assert official and text == question
-        return {'status': 'web_answer', 'content': '学校前身始建于1958年，2010年更名。',
-                'web_sources': [{'url': 'https://www.wtu.edu.cn/xxgk/xxjj.htm'}], 'citations': []}
-    monkeypatch.setattr(conversation, 'web_answer', verified_web)
-    item, = conversation.answer_turn(None, question, {})['items']
+    monkeypatch.setattr(settings(), 'deepseek_model', 'deepseek-flash')
+    url = 'https://example.org/university-history'
+
+    def handler(request):
+        payload = json.loads(request.content)
+        assert {'type': 'deepseek_web_search'} in payload['tools']
+        assert payload['messages'][-1]['content'] == question
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {
+            'content': '武汉纺织大学前身始建于1958年。',
+            'annotations': [{'type': 'url_citation', 'url_citation': {'url': url}}],
+            'server_tool_calls': [{'calls': [{'status': 'completed', 'sources': [
+                {'url': url, 'title': '大学校史', 'snippet': '武汉纺织大学前身始建于1958年。'},
+            ]}]}],
+        }}]})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, 'Client', lambda **kwargs: real_client(
+        transport=httpx.MockTransport(handler), **kwargs))
+    with SessionLocal() as db:
+        item, = conversation.answer_turn(db, question, {})['items']
+    assert item['web_sources'][0]['url'] == url
     assert item['status'] == 'web_answer'
     assert item['knowledge_gap']
     assert item['content'].startswith('知识库暂时没有相关资料。这是我联网查到的内容')
@@ -145,12 +160,12 @@ def test_specific_award_path_does_not_intercept_other_awards_or_mixed_questions(
     assert scholarship_request(question) is None
 
 
-def test_national_scholarship_amount_alias_falls_back_to_official_source(client, monkeypatch):
+def test_national_scholarship_amount_alias_falls_back_to_native_search(client, monkeypatch):
     signup(client, student())
     publish('国家奖学金评审打分表', '智育排名30分，综合测评排名20分。', year=2026)
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
-    def money_result(db, question, *, official, search_query=None):
-        assert official and '本科生国家奖学金' in question and '奖励金额' in question
+    def money_result(db, question, *, campus_gap):
+        assert campus_gap and '本科生国家奖学金' in question and '奖励金额' in question
         return {'status': 'web_answer', 'content': '本科生国家奖学金标准为每生每学年10000元。',
                 'citations': [], 'web_sources': [{'url': 'https://welcome.wtu.edu.cn/info/1021/2031.htm'}]}
     monkeypatch.setattr(conversation, 'find_web_answer', money_result)

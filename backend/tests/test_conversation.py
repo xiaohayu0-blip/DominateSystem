@@ -107,48 +107,6 @@ def test_web_answer_requires_verified_search_sources(monkeypatch):
     assert not answer['items'][0].get('web_sources')
 
 
-def test_school_history_fallback_reads_the_school_profile_page(monkeypatch):
-    url = 'https://www.wtu.edu.cn/xxgk/xxjj.htm'
-    seen = []
-
-    def handler(request):
-        seen.append(str(request.url))
-        return httpx.Response(200, headers={'content-type': 'text/html; charset=UTF-8'},
-            text='<p>武汉纺织大学前身始建于1958年，2010年更名为武汉纺织大学。</p>')
-
-    real_client = httpx.Client
-    monkeypatch.setattr(chat.httpx, 'Client', lambda **kw: real_client(
-        transport=httpx.MockTransport(handler), **kw))
-    sources = real_search('武汉纺织大学的成立时间是什么时候', official=True)
-    assert seen == [url]
-    assert len(sources) == 1 and sources[0]['url'] == url
-    assert '1958年' in sources[0]['excerpt']
-
-
-def test_national_scholarship_official_section_preserves_yuan_amount(monkeypatch):
-    monkeypatch.setattr(chat, 'official_pages', lambda *args: [{
-        'url': 'https://welcome.wtu.edu.cn/info/1021/2031.htm',
-        'excerpt': '国家奖学金：\n奖励优秀全日制本科生，每生每年10\n000元。\n国家励志奖学金：\n每年6\n000元。',
-    }])
-    answer = chat.national_award_web_amount('本科生国家奖学金有多少钱？')
-    assert answer['status'] == 'web_answer' and '10000元' in answer['content']
-    assert '6000元' not in answer['content'] and answer['web_sources']
-
-
-def test_search_filters_other_schools_and_forged_official_domains(monkeypatch):
-    rss = '''<rss><channel><item><title>通知</title><link>https://em.wtu.edu.cn/info/a.htm</link>
-    <description>申请需要成绩单。</description></item><item><title>外校</title>
-    <link>https://other.edu.cn/a</link><description>申请无需材料。</description></item>
-    <item><title>假官网</title><link>https://wtu.edu.cn.evil.com/a</link>
-    <description>假规则</description></item></channel></rss>'''
-    real = httpx.Client
-    monkeypatch.setattr(chat.httpx, 'Client', lambda **kw: real(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=rss)), **kw))
-    sources = real_search('申请', official=True)
-    assert len(sources) == 1 and sources[0]['url'].startswith('https://em.wtu.edu.cn/')
-    assert sources[0]['published_at'] is None and sources[0]['retrieved_at']
-
-
 def test_new_topic_resets_prior_scope_and_followups_keep_anchor():
     previous = SimpleNamespace(text='2024年度奖学金如何申请', context={
         'business_year': 2024, 'selected_year': 2024, 'admission_year': 2022},
@@ -170,24 +128,10 @@ def test_search_timeout_is_a_controlled_failure(monkeypatch):
         raise httpx.ReadTimeout('timeout')
     monkeypatch.setattr(chat.httpx, 'Client', lambda **kw: real(transport=httpx.MockTransport(fail), **kw))
     try:
-        real_search('通知', official=True)
+        real_search('通知')
         assert False, 'timeout must not appear as an empty successful search'
     except ModelFailure:
         pass
-
-
-def test_official_search_falls_back_to_school_pages(monkeypatch):
-    real = httpx.Client
-    def handler(request):
-        if request.url.host == 'www.bing.com':
-            return httpx.Response(200, text='<rss><channel/></rss>')
-        return httpx.Response(200, headers={'content-type': 'text/html'}, text='<html><title>学院通知</title><body>'
-                              '<a href="/info/1/2.htm">奖学金申请通知</a>'
-                              '<article>奖学金申请需要成绩单。</article></body></html>')
-    monkeypatch.setattr(chat.httpx, 'Client', lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
-    sources = real_search('奖学金申请', official=True)
-    assert sources and all(chat.safe_url(s['url'], True) for s in sources)
-    assert any('成绩单' in s['excerpt'] for s in sources)
 
 
 def test_web_answer_uses_supported_source_numbers_and_keeps_links(monkeypatch):
@@ -260,7 +204,7 @@ def test_web_address_from_transport_metadata_is_valid_evidence(monkeypatch):
     monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *a: {
         'answer': '官网地址是 https://em.wtu.edu.cn/ 😊', 'source_ids': ['official-0']})
     with SessionLocal() as db:
-        item = chat.web_answer(db, '官网在哪里', official=True)
+        item = chat.web_answer(db, '官网在哪里')
     assert item['status'] == 'web_answer' and item['web_sources'] == [source]
 
 
