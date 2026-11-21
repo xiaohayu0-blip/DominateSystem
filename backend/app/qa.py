@@ -20,6 +20,7 @@ from .policy_context import clarification_for, policy_query, search_policy_evide
 from .question_planning import grouped_questions, question_clauses
 from .progress import report_progress
 from .ranking import ranking_answer
+from .scholarship import award_choice, scholarship_lookup, scholarship_request
 from .retrieval import DATED_BATCH_DEADLINE, GENERIC, citation, normalize_roster_query, sheet_key, terms
 from .schemas import scrub
 
@@ -204,7 +205,9 @@ def context_for(data, previous=None):
         history += [{"role": "user", "content": scrub(previous.text)},
                     {"role": "assistant", "content": scrub("\n".join(
                         item.get("content", "") for item in previous.answer.get("items", [])))[:2000]}]
-    dependent = bool(is_dependent_question(data.text.rstrip("？?")) or re.fullmatch(
+    clarification_kinds = {item.get("clarification_kind") for item in previous.answer.get("items", [])} if previous else set()
+    selected_award = award_choice(data.text) if "scholarship_amount" in clarification_kinds else None
+    dependent = bool(selected_award or is_dependent_question(data.text.rstrip("？?")) or re.fullmatch(
         r"(?:那么|那|换成|如果是)?\s*(?:大[一二三四](?:可以吗|能申请吗|呢)|"
         r"(?:20)?\d{2}年(?:度)?(?:呢)?|20\d{2}级(?:呢)?|"
         r"(?:国家|省|校|院)级[一二三]等奖(?:呢)?|\d+人(?:呢)?|"
@@ -227,8 +230,9 @@ def context_for(data, previous=None):
     short = re.sub(r"\s*(?:的话|呢|怎么办|是多少|加几分|加多少分)$", "", short)
     followup_year = re.fullmatch(FOLLOWUP_YEAR_WORD, short)
     team_size = TEAM_SIZE_REPLY.fullmatch(short)
-    clarification_kinds = {item.get("clarification_kind") for item in previous.answer["items"]}
-    if team_size and "competition_team_size" in clarification_kinds:
+    if selected_award:
+        topic = f"{selected_award}的奖励金额是多少？"
+    elif team_size and "competition_team_size" in clarification_kinds:
         topic = f"{anchor[0]}，团队共{team_size[1]}人"
     elif "ranking_metric" in clarification_kinds and re.fullmatch(r"(?:智育|综测|德育)(?:排名)?(?:分|积分)?", short):
         topic = re.sub(r"德育|智育|综测", "", anchor[0]) + f"，{short}"
@@ -731,7 +735,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
     results = []
     model = ExtractiveMock() if settings().model_mode == "mock" else DeepSeekModel()
     full_query = policy_query(retrieval_query(text, context))
-    parts = [text] if context.get("_planned_task") or clarification_for(full_query) else planned_questions(db, text, model)
+    single_item = context.get("_planned_task") or clarification_for(full_query) or scholarship_request(full_query)
+    parts = [text] if single_item else planned_questions(db, text, model)
     for part in parts:
         query = policy_query(normalize_roster_query(retrieval_query(part, context)))
         if TECHNICAL_LIMIT_QUESTION.search(query):
@@ -740,6 +745,10 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             continue
         if prompt := clarification_for(query):
             results.append({"question": part, "status": "needs_clarification", "content": prompt, "citations": []})
+            continue
+        if (request := scholarship_request(query)) and (
+                rule := scholarship_lookup(db, request, context, MAX_ANSWER_CHARS)):
+            results.append({"question": part, **rule})
             continue
         ranking = ranking_answer(db, query, context)
         if ranking:

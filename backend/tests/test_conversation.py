@@ -125,6 +125,16 @@ def test_school_history_fallback_reads_the_school_profile_page(monkeypatch):
     assert '1958年' in sources[0]['excerpt']
 
 
+def test_national_scholarship_official_section_preserves_yuan_amount(monkeypatch):
+    monkeypatch.setattr(chat, 'official_pages', lambda *args: [{
+        'url': 'https://welcome.wtu.edu.cn/info/1021/2031.htm',
+        'excerpt': '国家奖学金：\n奖励优秀全日制本科生，每生每年10\n000元。\n国家励志奖学金：\n每年6\n000元。',
+    }])
+    answer = chat.national_award_web_amount('本科生国家奖学金有多少钱？')
+    assert answer['status'] == 'web_answer' and '10000元' in answer['content']
+    assert '6000元' not in answer['content'] and answer['web_sources']
+
+
 def test_search_filters_other_schools_and_forged_official_domains(monkeypatch):
     rss = '''<rss><channel><item><title>通知</title><link>https://em.wtu.edu.cn/info/a.htm</link>
     <description>申请需要成绩单。</description></item><item><title>外校</title>

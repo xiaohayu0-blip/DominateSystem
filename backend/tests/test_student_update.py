@@ -11,6 +11,7 @@ from app.db import SessionLocal
 from app.models import Document, MailJob
 from app.retrieval import build_chunks
 from conftest import signup, student
+from test_knowledge import ask, publish
 
 
 @pytest.mark.parametrize(('question', 'classified_as'), [
@@ -93,6 +94,61 @@ def test_public_school_profile_discloses_knowledge_gap_and_searches_official_web
     assert item['knowledge_gap']
     assert item['content'].startswith('知识库暂时没有相关资料。这是我联网查到的内容')
     assert '1958' in item['content']
+
+
+@pytest.mark.parametrize('question', ['奖学金有多少', '奖学金多少钱？', '奖学金能拿多少？'])
+def test_unspecified_scholarship_amount_asks_which_award(client, question):
+    signup(client, student())
+    item, = ask(client, question)['answer']['items']
+    assert item['status'] == 'needs_clarification'
+    assert '国家奖学金' in item['content'] and '学业奖学金' in item['content']
+
+
+def test_award_choice_is_understood_as_an_amount_followup(client):
+    signup(client, student())
+    doc_id = publish('国家励志奖学金评选办法', '国家励志奖学金的奖励标准为每人每年6000元。', year=2026)
+    initial = ask(client, '2026年奖学金有多少')
+    item, = ask(client, '国励', previous_id=initial['id'])['answer']['items']
+    assert item['status'] == 'answered' and '6000元' in item['content']
+    assert item['citations'][0]['document_id'] == doc_id
+
+
+@pytest.mark.parametrize('question', ['桑麻奖学金有多少钱', '国家奖学金有多少钱，怎么申请？', '研究生国家奖学金有多少'])
+def test_specific_award_path_does_not_intercept_other_awards_or_mixed_questions(question):
+    from app.scholarship import scholarship_request
+    assert scholarship_request(question) is None
+
+
+def test_national_scholarship_amount_alias_falls_back_to_official_source(client, monkeypatch):
+    signup(client, student())
+    publish('国家奖学金评审打分表', '智育排名30分，综合测评排名20分。', year=2026)
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    def money_result(db, question, *, official, search_query=None):
+        assert official and '本科生国家奖学金' in question and '奖励金额' in question
+        return {'status': 'web_answer', 'content': '本科生国家奖学金标准为每生每学年10000元。',
+                'citations': [], 'web_sources': [{'url': 'https://welcome.wtu.edu.cn/info/1021/2031.htm'}]}
+    monkeypatch.setattr(conversation, 'find_web_answer', money_result)
+    item, = ask(client, '国家级奖学金有多少钱')['answer']['items']
+    assert item['status'] == 'web_answer' and '10000元' in item['content']
+    assert item['knowledge_gap'] and item['web_sources']
+
+
+def test_national_scholarship_dual_ranking_requirements_quote_complete_rule(client, monkeypatch):
+    signup(client, student())
+    rule = ('（六）上一学年度智育成绩排名与综合测评成绩排名均在班级或专业前10%（含10%）且无不及格科目。'
+            '如在其他方面表现非常突出，智育成绩排名与综合测评成绩排名均没有进入班级和专业前10%，'
+            '但达到前30%（含30%）的学生且无不及格科目，也可申请国家奖学金，但需提交详细的证明材料，'
+            '证明材料须经学院审核盖章确认。')
+    doc_id = publish('管理学院本科生国家奖学金评选办法（2026年修订版）', rule, year=2026)
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    def unexpected(*args, **kwargs):
+        raise AssertionError('完整排名条款可直接引用')
+    monkeypatch.setattr(conversation, 'plan_turn', unexpected)
+    monkeypatch.setattr(conversation, 'find_web_answer', unexpected)
+    item, = ask(client, '申请国家奖学金，智育成绩和综合测评排名需要满足什么要求？', business_year=2026)['answer']['items']
+    assert item['status'] == 'answered' and '前10%' in item['content'] and '前30%' in item['content']
+    assert '无不及格' in item['content'] and '审核盖章' in item['content']
+    assert item['citations'][0]['document_id'] == doc_id
 
 
 def test_examples_can_be_answered_and_are_withdrawn_when_source_is_disabled(admin_client, monkeypatch):

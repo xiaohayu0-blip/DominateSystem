@@ -20,6 +20,7 @@ from .schemas import scrub
 from .retrieval import terms
 from .competition_catalog import competition_classification
 from .ranking import ranking_answer
+from .scholarship import scholarship_request
 
 
 def model_json(db, system, payload):
@@ -181,6 +182,10 @@ def official_pages(question):
             read('https://www.wtu.edu.cn/xxgk/xxjj.htm', '武汉纺织大学简介')
             if sources:
                 return sources
+        if domain == 'wtu.edu.cn' and scholarship_request(question) == ('amount', '国家奖学金'):
+            read('https://welcome.wtu.edu.cn/info/1021/2031.htm', '武汉纺织大学资助政策简介')
+            if sources:
+                return sources
         for root in roots:
             read(root)
         for _, url, title in sorted(candidates, reverse=True)[:2]:
@@ -190,7 +195,7 @@ def official_pages(question):
 
 def search_web(question, *, official=False):
     query = scrub(question)
-    if official and SCHOOL_PROFILE.search(question):
+    if official and (SCHOOL_PROFILE.search(question) or scholarship_request(question)):
         sources = official_pages(question)
         if sources:
             return sources
@@ -382,9 +387,33 @@ INTRODUCTION = re.compile(
 CAMPUS_SCOPE = re.compile(r"本校|本院|我校|我院|(?:我们|咱们|你们)(?:学校|学院)|学院的|学校的|武汉纺织大学")
 CAMPUS_FACT = re.compile(r"规定|制度|流程|审批|截止|评[定审选]|资格|名单|模板|多少|几分|何时|什么时候|安排|怎么申请")
 SCHOOL_PROFILE = re.compile(r"校史|学校简介|建校|始建|创建|创办|办学历史|成立时间|哪[一年几].{0,8}成立|什么时候成立|校训|更名|校址")
+NATIONAL_AWARD_SECTION = re.compile(
+    r"(?:^|\n)(?:[（(][一二三四五六七八九十]+[）)])?\s*国家奖学金[：:]\s*"
+    r"(?P<clause>(?:(?!奖学金[：:])[^。])+?(?:每生|每人)每(?:学)?年\s*[\d\s,，]+元)[^。]*。")
+
+
+def national_award_web_amount(question):
+    year = re.search(YEAR_WORD, question)
+    if (scholarship_request(question) != ('amount', '国家奖学金')
+            or year and year[1] != today()[:4]
+            or settings().school_official_domain.strip('.') != 'wtu.edu.cn'):
+        return None
+    for source in official_pages(question):
+        if source['url'] != 'https://welcome.wtu.edu.cn/info/1021/2031.htm':
+            continue
+        clause = NATIONAL_AWARD_SECTION.search(source['excerpt'])
+        if clause and '全日制本科生' in clause['clause']:
+            text = re.sub(r"(?<=\d)[\s,，]+(?=\d{3}元)", "", clause['clause'])
+            if len(text) + len(WEB_GAP_PREFIX) + 12 > MAX_ANSWER_CHARS:
+                continue
+            return {'question': question, 'status': 'web_answer', 'citations': [],
+                    'content': '按学校公布的资助政策，' + text + '。', 'web_sources': [source]}
+    return None
 
 
 def find_web_answer(db, question, *, official=False, search_query=None):
+    if official and (award := national_award_web_amount(question)):
+        return award
     try:
         result = direct_model_answer(db, question, official=official)
         if not result.get('web_sources'):
@@ -396,7 +425,7 @@ def find_web_answer(db, question, *, official=False, search_query=None):
 
 def fill_material_gap(db, item, *, search_query=None):
     try:
-        result = find_web_answer(db, item['question'], official=True, search_query=search_query)
+        result = find_web_answer(db, item.get('search_question', item['question']), official=True, search_query=search_query)
     except (ModelFailure, MissingEvidence, InvalidEvidence, TypeError, AttributeError):
         return {**item, 'content': WEB_GAP_UNVERIFIED}
     return {**result, 'question': item['question'], 'knowledge_gap': True,
@@ -444,10 +473,13 @@ def answer_turn(db, text, context):
                                "citations": [source]}], "context": context, "model_mode": settings().model_mode}
     if settings().model_mode == 'mock' or TECHNICAL_LIMIT_QUESTION.search(text):
         return policy_answer(db, text, context)
-    try:
-        tasks = plan_turn(db, text, context)
-    except (ModelFailure, InvalidEvidence, TypeError, AttributeError):
+    if scholarship_request(context.get('followup_question') or text):
         tasks = [{'question': text, 'kind': 'campus'}]
+    else:
+        try:
+            tasks = plan_turn(db, text, context)
+        except (ModelFailure, InvalidEvidence, TypeError, AttributeError):
+            tasks = [{'question': text, 'kind': 'campus'}]
     items = []
     resolved_context = context
     for task in tasks:
@@ -474,9 +506,10 @@ def answer_turn(db, text, context):
         if kind == 'campus':
             answer = policy_answer(db, question, {**scope, "_planned_task": bool(task.get("clauses"))})
             for item in answer['items']:
-                if item['status'] == 'missing_material':
+                if item['status'] == 'missing_material' or (
+                        item['status'] == 'validation_failed' and scholarship_request(item['question'])):
                     query = task.get('search_query') if item['question'] == question else None
-                    items.append(fill_material_gap(db, item, search_query=query))
+                    items.append(fill_material_gap(db, {**item, 'status': 'missing_material'}, search_query=query))
                 else:
                     items.append(item)
                     items.extend(fill_material_gap(db, {'question': missing, 'status': 'missing_material',
