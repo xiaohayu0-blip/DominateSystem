@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .config import settings
-from .qa import (DeepSeekModel, InvalidEvidence, MissingEvidence, ModelFailure,
+from .qa import (calendar_overview, MAX_ANSWER_CHARS, DeepSeekModel, InvalidEvidence, MissingEvidence, ModelFailure,
                  YEAR_WORD, GRADE_WORD,
                  TECHNICAL_LIMIT_QUESTION, answer_question as policy_answer,
                  is_dependent_question, model_budget_available, semaphore, verified_excerpts)
@@ -346,6 +346,16 @@ def web_answer(db, question, *, official=False, search_query=None):
 
 
 def answer_turn(db, text, context):
+    annual_holiday = re.fullmatch(
+        r"(?:请问)?(?:我们学校|学校|本校)?(今年|去年|20\d{2}年)(?:我们学校|学校|本校)?"
+        r"(?:什么时候放假|几号放假|有哪些假期|放假安排)(?:啊|呀|呢|吗)?[？?。！!]*", text.strip())
+    if annual_holiday:
+        year = context["business_year"] if not annual_holiday[1][0].isdigit() else int(annual_holiday[1][:4])
+        question = f"{year}年有哪些假期"
+        source = calendar_overview(db, question, context)
+        if source and 0 < len(source["excerpt"].strip()) <= MAX_ANSWER_CHARS:
+            return {"items": [{"question": text, "status": "answered", "content": source["excerpt"],
+                               "citations": [source]}], "context": context, "model_mode": settings().model_mode}
     if settings().model_mode == 'mock' or TECHNICAL_LIMIT_QUESTION.search(text):
         return policy_answer(db, text, context)
     try:

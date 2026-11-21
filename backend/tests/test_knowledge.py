@@ -815,3 +815,21 @@ def test_unknown_source_and_scope(client):
     assert client.get("/api/sources/" + chunk_id).status_code == 404
     item = ask(client, "帮我审批奖学金")["answer"]["items"][0]
     assert item["status"] == "answered" and item["citations"]
+
+
+def test_annual_holiday_question_uses_published_year_excerpt(client, monkeypatch):
+    from app.conversation import answer_turn
+    from app.qa import CALENDAR_YEAR_LOCATION_PREFIX
+
+    excerpt = "校历覆盖2026年9月至12月。国庆节标记为10月1日，放假天数按通知。"
+    doc_id = publish("校历", excerpt)
+    monkeypatch.setattr(settings(), "model_mode", "deepseek")
+    with SessionLocal() as db:
+        chunk = db.scalar(select(Chunk).where(Chunk.document_id == doc_id))
+        chunk.location = "第1页" + CALENDAR_YEAR_LOCATION_PREFIX + "2026"
+        db.commit()
+        for question in ("今年什么时候放假啊", "请问本校2026年几号放假？"):
+            for history in ([], [{"role": "user", "content": "奖学金金额是多少"}]):
+                item, = answer_turn(db, question, {"business_year": 2026, "history": history})["items"]
+                assert item["status"] == "answered" and item["content"] == excerpt
+                assert item["citations"][0]["chunk_id"] == chunk.id
