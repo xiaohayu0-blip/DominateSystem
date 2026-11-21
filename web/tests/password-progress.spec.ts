@@ -1,5 +1,49 @@
 import { test, expect } from '@playwright/test'
 
+test('手机问答显示纯文本与等高联网来源', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 690 })
+  const content = '**测试项目**\n- 800米，连续3天\n计算：2*3*4\n[原通知](https://school.example/notice)'
+  const web_sources = Array.from({ length: 4 }, (_, index) => ({
+    id: String(index), title: `来源${index + 1}` + '体质健康测试安排及注意事项'.repeat(index + 1),
+    url: `https://school.example/source/${index + 1}`, excerpt: '这段长摘要不应占据页面。'.repeat(50),
+    published_at: '2022-04-13', retrieved_at: '2026-11-21',
+  }))
+  const question = { id: 'web-citations', text: '体测要求是啥', status: 'complete', alert: null,
+    created_at: '2026-11-21T07:11:00', answer: { items: [{
+      question: '体测要求是啥', status: 'web_answer', content, citations: [], web_sources,
+    }] } }
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/me') return route.fulfill({ json: {
+      id: 'web-source-student', role: 'student', name: '测试学生', phone: '13800000003',
+      major: '工商管理', class_name: '测试一班', children: [],
+    } })
+    if (path === '/api/modes') return route.fulfill({ json: { environment: 'test', model: 'mock' } })
+    if (path === '/api/question-examples') return route.fulfill({ json: [] })
+    if (path === '/api/questions' || path === '/api/questions/web-citations') return route.fulfill({ json: question })
+    if (path === '/api/questions/web-citations/stream') return route.fulfill({
+      contentType: 'text/event-stream', body: `event: complete\ndata: ${JSON.stringify(question)}\n\n`,
+    })
+    throw new Error('Unexpected API request: ' + path)
+  })
+  await page.goto('/')
+  await page.getByRole('textbox', { name: '你的问题' }).fill(question.text)
+  await page.getByRole('button', { name: '发送问题', exact: true }).click()
+
+  const answer = page.locator('.answer-item > .pre-wrap')
+  await expect(answer).toHaveText('测试项目\n• 800米，连续3天\n计算：2*3*4\n原通知（https://school.example/notice）')
+  const sources = page.getByRole('region', { name: '联网来源' })
+  const visibleCards = sources.getByRole('link')
+  await expect(visibleCards).toHaveCount(2)
+  await expect(visibleCards.first()).toHaveAttribute('href', web_sources[0].url)
+  await expect(sources).not.toContainText('这段长摘要')
+  for (const card of await visibleCards.all()) expect((await card.boundingBox())?.height).toBe(60)
+  await sources.getByText('查看更多来源（2）').click()
+  await expect(visibleCards).toHaveCount(4)
+  await expect(visibleCards.last()).toHaveAttribute('href', web_sources[3].url)
+  expect((await visibleCards.last().boundingBox())?.height).toBe(60)
+})
+
 test('手机制度出处可滑动并始终能关闭', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 590 })
   const profile = { id: 'source-student', role: 'student', name: '制度测试学生', phone: '13800000003',

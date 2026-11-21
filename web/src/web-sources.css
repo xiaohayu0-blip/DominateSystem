@@ -1,0 +1,54 @@
+.web-sources {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.web-sources .eyebrow {
+  margin: 0;
+}
+
+.web-source-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 60px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid #e7def0;
+  border-radius: 12px;
+  background: #f1edf9;
+  color: #51425b;
+}
+
+.web-source-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  line-height: 1.4;
+}
+
+.web-source-copy > * {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.web-source-copy strong { font-size: 13px; }
+.web-source-copy small { font-size: 11px; color: #695b74; }
+.web-source-card > svg { flex: none; }
+.web-source-card:hover { background: #ece5f6; }
+
+.web-sources-more summary {
+  width: fit-content;
+  min-height: 44px;
+  padding: 10px 2px;
+  color: #53436b;
+  font-size: 12px;
+}
+
+.web-sources-more .web-source-card + .web-source-card {
+  margin-top: 8px;
+}

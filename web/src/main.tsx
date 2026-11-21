@@ -2,13 +2,15 @@ import { StrictMode, cloneElement, isValidElement, useId, useEffect, useRef, use
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { ArrowUpRight, ArrowUp, BookOpen, FileText, ChevronRight, ShieldCheck, LogOut, Plus, X, LayoutDashboard, Inbox, CalendarDays, Siren, Files, Users, Search, Menu, RefreshCw, CheckCircle2 } from 'lucide-react'
-import { api, ApiError, streamAnswer, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type EventConversation, type Review, type Modes, type Answer, type History } from './api'
+import { api, ApiError, streamAnswer, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type EventConversation, type Review, type Modes, type Answer, type History, type WebSource } from './api'
+import { plainAnswer } from './answer-text'
 import { VocabularyPage } from './VocabularyPage'
 import './style.css'
 import './interface.css'
 import './tactile.css'
 import './admin-theme.css'
 import './source-dialog.css'
+import './web-sources.css'
 
 const octopusImage = new URL('./assets/octopus-reference.jpg', import.meta.url).href
 
@@ -293,24 +295,47 @@ function UserApp() {
   </div>
 }
 
+function WebSourceCard({ source, url }: { source: WebSource; url: URL }) {
+  return <a className="web-source-card" href={url.href} target="_blank" rel="noopener noreferrer" title={source.title}>
+    <span className="web-source-copy">
+      <strong>{source.title || url.hostname}</strong>
+      <small>{url.hostname}{source.published_at && ` · ${source.published_at}`}</small>
+    </span>
+    <ArrowUpRight size={16} aria-hidden="true"/>
+  </a>
+}
+
 function AnswerView({ answer, open, student = false }: { answer: Answer; open?: (c: Citation) => void; student?: boolean }) {
   const sources = new Map<string, Citation>()
+  const webSources = new Map<string, { source: WebSource; url: URL }>()
   for (const item of answer.items ?? []) {
     for (const citation of item.citations) {
       if (!sources.has(citation.document_id)) sources.set(citation.document_id, citation)
     }
+    for (const source of item.web_sources ?? []) {
+      try {
+        const url = new URL(source.url)
+        if ((url.protocol === 'https:' || url.protocol === 'http:') && !webSources.has(url.href)) {
+          webSources.set(url.href, { source, url })
+        }
+      } catch { /* A malformed historical URL has no navigable source card. */ }
+    }
   }
+  const webCards = Array.from(webSources.values(), entry => <WebSourceCard key={entry.url.href} {...entry}/>)
 
   return <>
     {answer.items?.map((item, i) => <section className="answer-item" key={i}>
       <div className="answer-title">{!student && <Tag value={item.status}/>}<strong>{item.question}</strong></div>
-      <p className="pre-wrap">{student && item.status === "validation_failed" ? "暂时无法确认准确答案。请补充具体事项或适用年度后再试。" : item.content}</p>
-      {item.web_sources?.map(source => <details key={source.id} className="citation">
-        <summary><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
-          <small>发布日期：{source.published_at ?? '未提供'} · 查询日期：{source.retrieved_at}</small></summary>
-        <p className="pre-wrap">网页摘录／搜索摘要：{source.excerpt}</p>
-      </details>)}
+      <p className="pre-wrap">{student && item.status === "validation_failed" ? "暂时无法确认准确答案。请补充具体事项或适用年度后再试。" : plainAnswer(item.content)}</p>
     </section>)}
+    {webCards.length > 0 && <section className="answer-item web-sources" aria-label="联网来源">
+      <span className="eyebrow">联网来源</span>
+      {webCards.slice(0, 2)}
+      {webCards.length > 2 && <details className="web-sources-more">
+        <summary>查看更多来源（{webCards.length - 2}）</summary>
+        {webCards.slice(2)}
+      </details>}
+    </section>}
     {sources.size > 0 && <section className="answer-item">
       <span className="eyebrow">出处</span>
       {Array.from(sources.values(), c => <button className="citation" key={c.document_id} onClick={() => open?.(c)} disabled={!open}>
