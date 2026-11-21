@@ -80,6 +80,7 @@ def finish_question(question_id, factory=SessionLocal):
             try:
                 answer = answer_question(db, q.text, q.context)
             except Exception:
+                logger.exception("Question answering failed for question %s", question_id)
                 answer = {"items": [{"question": q.text, "status": "system_error",
                                      "content": "服务暂时不可用，已记录技术故障。", "citations": []}],
                           "context": q.context, "model_mode": q.model_mode}
