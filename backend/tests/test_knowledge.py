@@ -261,7 +261,7 @@ def test_no_selected_clause_is_missing_material_without_retry(client, monkeypatc
     def model_answer(_, query, evidence, *, retry=False):
         calls.append(retry)
         assert evidence and all("打分表" not in source["title"] for source in evidence)
-        return {"answer": "现有资料没有该加分条款。", "selections": []}
+        return {"answer": "现有资料没有该加分条款。", "selections": [], "needs_search": True}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, question, business_year=2026)["answer"]["items"][0]
@@ -536,7 +536,7 @@ def test_current_year_overrides_inherited_year_and_model_can_abstain(client, mon
     publish("奖学金评定办法", "申请校级奖学金要求综合素质测评成绩位于专业前30%。", year=current_year)
     monkeypatch.setattr(settings(), "model_mode", "deepseek")
     monkeypatch.setattr(DeepSeekModel, "select_evidence",
-                        lambda *_, **__: {"answer": "资料未说明应交材料，无法回答。", "selections": []})
+                        lambda *_, **__: {"answer": "资料未说明应交材料，无法回答。", "selections": [], "needs_search": True})
     answer = ask(client, "今年申请奖学金要交什么", previous_id=previous["id"])["answer"]
     assert answer["context"]["business_year"] == current_year
     assert answer["items"][0]["status"] == "missing_material"
