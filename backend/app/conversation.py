@@ -45,12 +45,13 @@ def plan_turn(db, text, context):
         '答案取决于本校本院的规定、安排、评审、名单、流程或其他具体事实时归campus，只查知识库。'
         '未指明学校的校内业务（奖学金金额、申请、请假、综测加分等）默认指本校，除非前文明确是校外事项。'
         '是否要求联网不改变归类。仅询问通用写法或概念（例如奖学金申请书怎么写）归general。'
-        '闲聊、创作、知识解释、通用建议归general；最新信息、新闻、天气、价格等归web。'
+        '打招呼、自我介绍、闲聊和明确的创作请求归chat；知识解释、通用建议归general；'
+        '最新信息、新闻、天气、价格等归web。包含事实查证的请求按事实类别处理。'
         '学校具体事实必须归campus，不能归general或用外校规定替代。'
         '每个question是当前诉求的自足问句，禁止擅自增添事实。'
         'search_query提取精简搜索关键词，去掉请问、联网、查一下等措辞，保留关键实体及所问事项。'
         '每个任务clauses列出所覆盖原句的0起始编号，每个编号必须且仅出现一次，组内升序，按首次出现顺序排列。'
-        '输出JSON：{"tasks":[{"question":"完整问题","kind":"campus|general|web",'
+        '输出JSON：{"tasks":[{"question":"完整问题","kind":"campus|chat|general|web",'
         '"search_query":"搜索关键词","clauses":[0,1]}]}。'
     ), {'current_question': scrub(text), 'recent_conversation': context.get('history', []),
         'clauses': [{'index': i, 'text': scrub(clause)} for i, clause in enumerate(clauses)],
@@ -59,7 +60,7 @@ def plan_turn(db, text, context):
     if not isinstance(tasks, list) or not 1 <= len(tasks) <= 4:
         raise InvalidEvidence('invalid_conversation_plan')
     for task in tasks:
-        if (not isinstance(task, dict) or task.get('kind') not in {'campus', 'general', 'web'}
+        if (not isinstance(task, dict) or task.get('kind') not in {'campus', 'chat', 'general', 'web'}
                 or not isinstance(task.get('question'), str) or not 1 <= len(task['question']) <= 2000):
             raise InvalidEvidence('invalid_conversation_task')
         if 'search_query' in task and (not isinstance(task['search_query'], str) or len(task['search_query']) > 500):
@@ -295,8 +296,9 @@ def direct_model_answer(db, question, *, official=False):
 def general_answer(db, question, context):
     for retry in range(2):
         result = model_json(db, STYLE + (
-            '回答通用知识、闲聊或创作。最近对话只用于理解当前问题，切换话题不沿用旧条件。'
-            '学校具体规定及实时信息不能凭常识编造，需查证时返回needs_search:true。'
+            '只回应闲聊、自我介绍或明确的创作请求。自然接话，用合适的颜文字或表情。'
+            '最近对话只用于理解当前问题，切换话题不沿用旧条件。'
+            '请求知识解答、具体事实或需要来源时返回needs_search:true，不凭常识作答。'
             '输出JSON：{"answer":"答复","needs_search":false}。'
             + ('上次超长或格式错误，请压缩重写。' if retry else '')
         ), {'question': scrub(question), 'recent_conversation': context.get('history', [])})
@@ -353,7 +355,11 @@ QUESTION_EXAMPLES = (
     "2025年挑战杯专项赛属于哪类赛事？",
 )
 MATERIAL_GAP = "暂无资料。当前知识库没有足够的制度依据，问题已记录，建议向学院确认。"
-GREETING = re.compile(r"(?:你好|您好|嗨|哈喽|谢谢|感谢|再见|早上好|晚上好|小八你好|hello|hi)[！!。\s]*", re.I)
+GREETING = re.compile(r"(?:你好|您好|嗨|哈喽|早上好|晚上好|小八你好|hello|hi)[！!。？?\s]*", re.I)
+INTRODUCTION = re.compile(
+    r"(?:(?:你好|您好|嗨|哈喽|小八|请问)[，,、！! ]*)*"
+    r"(?:你是(?:谁|什么(?:助手|机器人|AI)?)|你叫什么(?:名字)?|你(?:能|会)做什么|(?:请)?(?:介绍一下你自己|自我介绍一下))"
+    r"[呀啊呢吗？?。！!\s]*", re.I)
 CAMPUS_SCOPE = re.compile(r"本校|本院|我校|我院|我们学校|我们学院|学院的|学校的|武汉纺织大学")
 CAMPUS_FACT = re.compile(r"规定|制度|流程|审批|截止|评[定审选]|资格|名单|模板|多少|几分|何时|什么时候|安排|怎么申请")
 
@@ -378,6 +384,10 @@ def example_answer(db, question):
 
 
 def answer_turn(db, text, context):
+    if INTRODUCTION.fullmatch(text.strip()) or GREETING.fullmatch(text.strip()):
+        item = {"question": text, "status": "general_answer", "citations": [],
+                "content": "嗨，我是小八，管理学院的校园小助手 (｡•̀ᴗ-)✧。想查制度、问办事流程，或者聊聊校园生活，都可以来找我。"}
+        return {"items": [item], "context": context, "model_mode": settings().model_mode}
     if text in QUESTION_EXAMPLES:
         result = example_answer(db, text) or {
             "status": "missing_material", "content": MATERIAL_GAP, "citations": []}
@@ -432,10 +442,16 @@ def answer_turn(db, text, context):
                                   'content': MATERIAL_GAP, 'citations': []}
                                  for missing in item.get('missing_questions', []))
             continue
-        if kind == 'general' and GREETING.fullmatch(question.strip()):
-            items.append({'question': question, 'status': 'general_answer', 'citations': [],
-                          'content': '你好，我是小八。有什么想了解的？'})
-            continue
+        if kind == 'chat':
+            try:
+                result = general_answer(db, question, context)
+            except (ModelFailure, InvalidEvidence, TypeError, AttributeError):
+                items.append({'question': question, 'status': 'system_error', 'citations': [],
+                              'content': '我刚才没接上这句。你可以换个说法，我们接着聊。'})
+                continue
+            if result:
+                items.append(result)
+                continue
         try:
             try:
                 result = direct_model_answer(db, question)
@@ -450,5 +466,7 @@ def answer_turn(db, text, context):
         except (ModelFailure, MissingEvidence, InvalidEvidence, TypeError, AttributeError):
             items.append({'question': question, 'status': 'web_unavailable', 'citations': [],
                           'content': '本次联网未查到可核实的信息，请稍后重试或补充具体问题。'})
-    return {'items': items, 'context': resolved_context, 'model_mode': settings().model_mode,
-            'notice': '制度答复请核对原文及适用范围；通用回答由模型生成。联网摘要附真实链接与查询日期，发布日期未知时不作推断。'}
+    answer = {'items': items, 'context': resolved_context, 'model_mode': settings().model_mode}
+    if any(item['status'] not in {'general_answer', 'system_error'} for item in items):
+        answer['notice'] = '制度答复请核对原文及适用范围；通用回答由模型生成。联网摘要附真实链接与查询日期，发布日期未知时不作推断。'
+    return answer

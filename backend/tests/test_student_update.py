@@ -43,6 +43,33 @@ def test_unsourced_general_information_is_not_presented_as_answer(monkeypatch):
     assert '未查到可核实' in item['content']
 
 
+@pytest.mark.parametrize('question', ['你是谁', '小八，你叫什么名字？', '你好！'])
+def test_assistant_introduction_works_without_model_or_search(monkeypatch, question):
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    def unexpected(*args, **kwargs):
+        raise AssertionError('简单自我介绍不需要模型或联网')
+    monkeypatch.setattr(conversation, 'plan_turn', unexpected)
+    monkeypatch.setattr(conversation, 'direct_model_answer', unexpected)
+    answer = conversation.answer_turn(None, question, {})
+    item, = answer['items']
+    assert item['status'] == 'general_answer'
+    assert '小八' in item['content'] and '(｡•̀ᴗ-)✧' in item['content']
+    assert not answer.get('notice')
+
+
+def test_light_conversation_uses_the_chat_model_without_search(monkeypatch):
+    question = '陪我随便聊两句'
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(conversation, 'plan_turn', lambda *args: [{'kind': 'chat', 'question': question}])
+    monkeypatch.setattr(conversation, 'model_json', lambda *args: {'answer': '好呀，今天有没有什么有意思的事？😊'})
+    def unexpected(*args, **kwargs):
+        raise AssertionError('闲聊不应调用联网')
+    monkeypatch.setattr(conversation, 'direct_model_answer', unexpected)
+    item, = conversation.answer_turn(None, question, {})['items']
+    assert item['status'] == 'general_answer'
+    assert item['content'].endswith('😊')
+
+
 def test_examples_can_be_answered_and_are_withdrawn_when_source_is_disabled(admin_client, monkeypatch):
     client = admin_client
     assert signup(client, student()).status_code == 200
