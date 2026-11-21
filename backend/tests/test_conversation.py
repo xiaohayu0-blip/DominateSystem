@@ -87,6 +87,37 @@ def test_retry_can_reuse_pending_choice_after_failed_reply():
     assert context_for(retry, previous)['previous_branch'] == pending
 
 
+def test_how_to_request_sick_leave_answers_the_process_after_short_reply(client, monkeypatch):
+    signup(client, student())
+    title = '武汉纺织大学2026版学生手册'
+    rules = {
+        '病假证明材料': '学生请病假的，应提供校医院出具的病假证明材料。',
+        '辅导员批准': '请假3天以内，由辅导员批准。请假3天以上、一周以内（含一周），由辅导员审核，学院主管教学负责人、学生工作负责人批准。',
+        '请假申请表': '学生请假需填写请假申请表，包括本人基本信息、请假原因、请假时间等信息。',
+    }
+    doc_id = publish(title, '\n'.join(rules.values()))
+    expected = ('先填请假申请表，提交校医院出具的病假证明。'
+                '3天以内由辅导员批准；超过3天且不超过7天，由辅导员审核后报学院相关负责人批准。')
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', real_plan)
+
+    def model(self, system, payload):
+        if 'current_question' in payload:
+            assert payload['current_question'] == '怎么请假'
+            return {'tasks': [{'kind': 'campus', 'question': '怎么请假', 'clauses': [0],
+                               'clarify_options': ['因病请假', '因事请假']}]}
+        assert '怎么请假' in payload['question'] and '因病请假' in payload['question']
+        source = next(item for item in payload['untrusted_evidence'] if item['document_id'] == doc_id)
+        return {'answer': expected, 'selections': [{'chunk_id': source['chunk_id'], 'start_line': 999, 'end_line': 999}]}
+
+    monkeypatch.setattr(DeepSeekModel, 'request_json', model)
+    first = ask(client, '怎么请假')
+    assert first['answer']['items'][0]['status'] == 'needs_clarification'
+    item, = ask(client, '因病', previous_id=first['id'])['answer']['items']
+    assert item['status'] == 'answered' and item['content'] == expected
+    assert item['citations'][0]['document_id'] == doc_id
+
+
 def plan(monkeypatch, tasks):
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     monkeypatch.setattr(chat, 'plan_turn', lambda *args: tasks)
@@ -166,7 +197,7 @@ def test_partial_knowledge_is_kept_with_missing_material(monkeypatch):
     assert '知识库暂时没有' in answer['items'][1]['content']
 
 
-def test_web_answer_requires_verified_search_sources(monkeypatch):
+def test_web_answer_keeps_text_without_attaching_unknown_sources(monkeypatch):
     plan(monkeypatch, [{'question': '最新通知', 'kind': 'web'}])
     monkeypatch.setattr(DeepSeekModel, 'request_web', lambda *a: {
         'content': '我暂时无法确认最新通知。',
@@ -176,7 +207,7 @@ def test_web_answer_requires_verified_search_sources(monkeypatch):
     })
     with SessionLocal() as db:
         answer = chat.answer_turn(db, '最新通知', {})
-    assert answer['items'][0]['status'] == 'web_unavailable'
+    assert answer['items'][0]['status'] == 'web_answer'
     assert not answer['items'][0].get('web_sources')
 
 
@@ -207,7 +238,7 @@ def test_search_timeout_is_a_controlled_failure(monkeypatch):
         pass
 
 
-def test_web_answer_uses_supported_source_numbers_and_keeps_links(monkeypatch):
+def test_web_answer_preserves_model_numbers_and_keeps_links(monkeypatch):
     plan(monkeypatch, [{'question': '最新发布', 'kind': 'web'}])
     url = 'https://example.org/news'
     message = {
@@ -223,8 +254,8 @@ def test_web_answer_uses_supported_source_numbers_and_keeps_links(monkeypatch):
         assert answer['items'][0]['web_sources'][0]['url'] == url
         message['content'] = '开放30个申请名额，仅限大二学生。'
         failed = chat.answer_turn(db, '最新发布', {})
-        assert failed['items'][0]['status'] == 'web_unavailable'
-        assert '30个' not in failed['items'][0]['content']
+        assert failed['items'][0]['status'] == 'web_answer'
+        assert failed['items'][0]['content'] == message['content']
 
 
 def test_general_answer_preserves_model_text_without_character_cutoff(monkeypatch):

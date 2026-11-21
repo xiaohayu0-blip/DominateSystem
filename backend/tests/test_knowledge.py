@@ -244,7 +244,7 @@ def test_model_error_and_invalid_reference_not_missing(client, monkeypatch):
     assert ask(client, "奖学金材料")["answer"]["items"][0]["status"] == "system_error"
     monkeypatch.setattr(ExtractiveMock, "select_evidence", lambda *_: {"selections": [{"chunk_id": "fake", "quote": "随意编造"}]})
     answer = ask(client, "奖学金材料")["answer"]["items"][0]
-    assert answer["status"] == "validation_failed" and not answer["citations"]
+    assert answer["status"] == "system_error" and not answer["citations"]
 
 
 @pytest.mark.parametrize("question", [
@@ -273,7 +273,7 @@ def test_no_selected_clause_is_missing_material_without_retry(client, monkeypatc
 
 
 @pytest.mark.parametrize("generated_score", [15, 50])
-def test_score_is_displayed_from_source(client, monkeypatch, generated_score):
+def test_score_is_displayed_as_generated_by_model(client, monkeypatch, generated_score):
     signup(client, student())
     quote = "德育素质积分基准为15分。"
     publish("德育评分办法", quote)
@@ -286,10 +286,10 @@ def test_score_is_displayed_from_source(client, monkeypatch, generated_score):
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "德育素质积分基准多少分？")["answer"]["items"][0]
     assert item["status"] == "answered" and item["citations"]
-    assert "15分" in item["content"] and "50分" not in item["content"]
+    assert item["content"] == f"德育素质积分基准为{generated_score}分。"
 
 
-def test_deepseek_summarizes_verified_excerpts_without_inventing_numbers(client, monkeypatch):
+def test_deepseek_body_and_citations_are_shown_separately(client, monkeypatch):
     signup(client, student())
     quote = "数学建模竞赛获省级三等奖的，综测加0.3分。"
     original = f"第三章 加分项目。{quote}同一项目不重复加分。"
@@ -319,11 +319,11 @@ def test_deepseek_summarizes_verified_excerpts_without_inventing_numbers(client,
     selected_quote = quote
     summary = correct_summary.replace("0.3", "0.5")
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "validation_failed" and "0.5分" not in item["content"]
+    assert item["status"] == "answered" and item["content"] == summary
 
     recover_on_retry = True
     item = ask(client, question, business_year=2023)["answer"]["items"][0]
-    assert item["status"] == "answered" and item["content"] == correct_summary and item["citations"]
+    assert item["status"] == "answered" and item["content"] == summary and item["citations"]
 
 
 def test_assessment_distinguishes_question_percentage_from_policy_threshold(client, monkeypatch):

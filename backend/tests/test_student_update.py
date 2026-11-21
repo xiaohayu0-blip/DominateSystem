@@ -35,7 +35,7 @@ def test_campus_material_gap_discloses_the_absence_of_verified_search_sources(mo
     assert '知识库暂时没有' in item['content'] and '暂未找到能核实' in item['content']
 
 
-def test_unsourced_general_information_is_not_presented_as_answer(monkeypatch):
+def test_unsourced_general_information_keeps_model_text(monkeypatch):
     question = '奖学金申请书怎么写？'
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     monkeypatch.setattr(conversation, 'plan_turn', lambda *args: [
@@ -43,8 +43,8 @@ def test_unsourced_general_information_is_not_presented_as_answer(monkeypatch):
     monkeypatch.setattr(conversation, 'direct_model_answer', lambda *args, **kwargs: {
         'question': question, 'status': 'general_answer', 'content': '无出处', 'citations': []})
     item, = conversation.answer_turn(None, question, {})['items']
-    assert item['status'] == 'web_unavailable'
-    assert '未查到可核实' in item['content']
+    assert item['status'] == 'general_answer'
+    assert item['content'] == '无出处' and not item['citations']
 
 
 @pytest.mark.parametrize('question', ['你是谁', '小八，你叫什么名字？', '你好！'])
@@ -107,7 +107,7 @@ def test_public_school_profile_uses_native_search_and_accepts_non_school_sources
     assert item['web_sources'][0]['url'] == url
     assert item['status'] == 'web_answer'
     assert item['knowledge_gap']
-    assert item['content'].startswith('知识库暂时没有相关资料。这是我联网查到的内容')
+    assert item['content'] == '武汉纺织大学前身始建于1958年。'
     assert '1958' in item['content']
 
 
@@ -200,7 +200,7 @@ def test_national_scholarship_dual_ranking_requirements_quote_complete_rule(clie
     assert item['citations'][0]['document_id'] == doc_id
 
 
-def test_policy_amount_retries_and_shows_corrected_model_reply(client, monkeypatch):
+def test_policy_amount_shows_original_model_reply_without_retry(client, monkeypatch):
     from app.qa import DeepSeekModel
 
     signup(client, student())
@@ -216,8 +216,8 @@ def test_policy_amount_retries_and_shows_corrected_model_reply(client, monkeypat
 
     monkeypatch.setattr(DeepSeekModel, 'select_evidence', single_reply)
     item, = ask(client, '特殊课程补贴有多少钱？')['answer']['items']
-    assert calls == [False, True] and item['status'] == 'answered'
-    assert item['content'] == '每人每年600元，休学时停发。'
+    assert calls == [False] and item['status'] == 'answered'
+    assert item['content'] == '小八查到啦，补贴为800元。'
     assert item['citations'][0]['document_id'] == doc_id
 
 

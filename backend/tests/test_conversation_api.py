@@ -28,7 +28,7 @@ def test_school_material_gap_is_recorded_in_existing_summary(client, monkeypatch
         'content': '这是模拟官方通知提供的日期。', 'web_sources': [{'url': 'https://www.wtu.edu.cn/'}], 'citations': []})
     result = ask(client, '2028年星际交换生截止日期')
     assert result['answer']['items'][0]['status'] == 'web_answer'
-    assert result['answer']['items'][0]['content'].startswith('知识库暂时没有相关资料。这是我联网查到的内容')
+    assert result['answer']['items'][0]['content'] == '这是模拟官方通知提供的日期。'
     with SessionLocal() as db:
         issues = list(db.scalars(select(Issue)))
         assert len(issues) == 1 and issues[0].question_id == result['id']

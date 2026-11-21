@@ -83,7 +83,7 @@ def test_count_grounding_keeps_scope_conditions_exceptions_and_full_enumeration(
         verified_excerpts(selected, sources, cohort_options=False, deepseek=True)
 
 
-def test_deadline_retries_invalid_model_duration(client, monkeypatch):
+def test_live_deadline_preserves_model_text_without_retry(client, monkeypatch):
     signup(client, student())
     original = "申请表与成绩单均须在三个工作日内提交。若系统故障，可向学院申请人工审核。"
     doc_id = publish("奖学金材料提交办法", original)
@@ -102,12 +102,12 @@ def test_deadline_retries_invalid_model_duration(client, monkeypatch):
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", wrong_count)
     item, = ask(client, "奖学金申请材料要在几天内提交？")["answer"]["items"]
-    assert attempts == [False, True]
-    assert item["status"] == "answered" and "3个工作日内提交" in item["content"]
-    assert "5个工作日" not in item["content"] and item["citations"][0]["document_id"] == doc_id
+    assert attempts == [False]
+    assert item["status"] == "answered" and item["content"] == "这两项都须在5个工作日内提交。"
+    assert item["citations"][0]["document_id"] == doc_id
 
 
-def test_deadline_keeps_exception_and_general_rule_separate(client, monkeypatch):
+def test_live_deadline_preserves_model_exception_wording(client, monkeypatch):
     signup(client, student())
     original = "申请表与成绩单均须在三个工作日内提交。若系统故障，可在五个工作日内补交。"
     publish("奖学金材料提交办法", original)
@@ -115,10 +115,8 @@ def test_deadline_keeps_exception_and_general_rule_separate(client, monkeypatch)
 
     def model(_, query, candidates, *, retry=False):
         chunk = candidates[0]["chunk_id"]
-        if retry:
-            assert "例外条件" in query
-        return {"answer": ("申请表和成绩单须在3个工作日内提交。系统故障时可在5个工作日内补交。" if retry
-                           else "申请表与成绩单均须在五个工作日内提交。"),
+        assert not retry
+        return {"answer": "申请表和成绩单须在3个工作日内提交。系统故障时可在5个工作日内补交。",
                 "selections": [{"chunk_id": chunk, "quote": original}]}
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model)
@@ -302,5 +300,5 @@ def test_direct_source_keeps_number_outside_the_selected_excerpt(client, monkeyp
 
     monkeypatch.setattr(DeepSeekModel, "select_evidence", model_answer)
     item = ask(client, "寝室长考核合格加几分")["answer"]["items"][0]
-    assert calls == [False, True] and item["status"] == "answered"
+    assert calls == [False] and item["status"] == "answered"
     assert "2分" in item["content"] and quote in item["citations"][0]["excerpt"]

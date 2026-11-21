@@ -114,5 +114,5 @@ def test_long_scholarship_citation_keeps_a_verified_short_answer():
               'location': '第3页', 'excerpt': quote + '其他评定细则。' * 100}
     answer, citations = cited_answer(
         {'answer': quote, 'selections': [{'chunk_id': 'award', 'quote': quote}]},
-        [source], question='学业奖学金各等级金额是多少？')
+        [source])
     assert answer == quote and citations == [source]
