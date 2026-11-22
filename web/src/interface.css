@@ -170,24 +170,6 @@
   line-height: 1.5;
 }
 
-.account-intro-topics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0 0 8px;
-  padding: 0;
-  list-style: none;
-}
-
-.account-intro-topics li {
-  padding: 5px 10px;
-  border: 1px solid #dce3ef;
-  border-radius: 999px;
-  background: var(--surface);
-  color: #445775;
-  font-size: 12px;
-}
-
 .account-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -313,86 +295,7 @@
   display: none;
 }
 
-.landing-admin-link {
-  display: none;
-}
-
 @media (max-width: 760px) {
-  .user-site--landing {
-    display: flex;
-    height: var(--landing-height, calc(100vh - 36px));
-    flex-direction: column;
-  }
-
-  .user-site.user-site--landing .site-header {
-    padding-block: 4px;
-  }
-
-  .environment:has(+ .user-site--landing) > span:not(.demo-label):not(.mode-detail) {
-    display: none;
-  }
-
-  .user-site .entry-layout.entry-layout--landing {
-    flex: 1 0 auto;
-    justify-content: flex-end;
-    width: 100%;
-    padding-block: 14px;
-  }
-
-  .user-site--landing > footer {
-    display: none;
-  }
-
-  .user-site--landing .entry-intro {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 6px;
-  }
-
-  .user-site--landing .entry-intro .service-disclosure {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .user-site--landing .entry-intro .service-disclosure > summary,
-  .user-site--landing .landing-admin-link {
-    display: flex;
-    min-height: 36px;
-    align-items: center;
-    gap: 4px;
-    color: #536783;
-    font-size: 11px;
-    white-space: nowrap;
-  }
-
-  .user-site .entry-layout--landing .account-intro {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    margin: 0;
-    padding: 12px 12px 24px;
-  }
-
-  .user-site .entry-layout--landing .account-intro h1 {
-    font-size: clamp(25px, 7vw, 34px);
-  }
-
-  .user-site .entry-layout--landing .account-intro p:not(.account-intro-kicker) {
-    margin-top: 8px;
-    font-size: 14px;
-  }
-
-  .user-site .account-entry {
-    order: 1;
-  }
-
-  .user-site .entry-layout--landing .account-actions {
-    margin: 0 0 3px;
-  }
-
   .user-site .exchange {
     scroll-margin-top: 60px;
   }
@@ -417,7 +320,11 @@
     padding: 12px 12px 20px;
   }
 
-  .user-site .entry-layout:not(.entry-layout--landing) .account-intro {
+  .user-site .account-entry {
+    order: 1;
+  }
+
+  .user-site .entry-layout .account-intro {
     display: block;
     margin-bottom: 14px;
     padding: 5px 4px 1px;

@@ -8,6 +8,7 @@ import { VocabularyPage } from './VocabularyPage'
 import './style.css'
 import './interface.css'
 import './tactile.css'
+import './homepage.css'
 import './admin-theme.css'
 import './source-dialog.css'
 import './web-sources.css'
@@ -223,31 +224,29 @@ function UserApp() {
     window.scrollTo(0, 0)
   }
   const chatProfile = !loading && !editing ? profile : null
-  const landing = !loading && !profile && !entryMode && !editing
-  const userSiteRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const site = userSiteRef.current
-    if (!landing || !site) return
-    const viewport = window.visualViewport
-    const fitLanding = () => {
-      const visibleHeight = viewport?.scale === 1 ? viewport.height : window.innerHeight
-      const pageTop = site.getBoundingClientRect().top + window.scrollY
-      site.style.setProperty('--landing-height', `${Math.max(0, Math.floor(visibleHeight - pageTop))}px`)
-    }
-    fitLanding()
-    window.addEventListener('resize', fitLanding)
-    viewport?.addEventListener('resize', fitLanding)
-    const banner = site.previousElementSibling
-    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(fitLanding) : null
-    if (banner) observer?.observe(banner)
-    return () => {
-      window.removeEventListener('resize', fitLanding)
-      viewport?.removeEventListener('resize', fitLanding)
-      observer?.disconnect()
-      site.style.removeProperty('--landing-height')
-    }
-  }, [landing])
-  return <div ref={userSiteRef} className={landing ? 'user-site user-site--landing' : 'user-site'}>
+  const accountActions = <div className="account-actions" aria-label="账号操作">
+    <button type="button" className="secondary account-action" aria-pressed={entryMode === 'register'} onClick={event => { rebound(event.currentTarget); setEntryMode('register') }}>注册账号</button>
+    <button type="button" className="primary account-action" aria-pressed={entryMode === 'login'} onClick={event => { rebound(event.currentTarget); setEntryMode('login') }}>登录账号</button>
+  </div>
+  if (!loading && !profile && !entryMode && !editing) return <div className="user-site homepage">
+    <header className="homepage-header">
+      <a className="homepage-brand" href="/">
+        <span className="homepage-icon" aria-hidden="true"><OctopusMascot/></span>
+        <div><h1>管理学院AI助理学工</h1><span className="homepage-subtitle">制度服务平台</span></div>
+      </a>
+      <nav aria-label="网站导航"><a className="homepage-nav-link" href="/" aria-current="page">制度咨询</a></nav>
+    </header>
+    <main id="main-content" className="homepage-main">
+      <ErrorBox error={error}/>
+      <p className="homepage-description">可查询请假与学籍办理、校历、综合测评、奖学金及学科竞赛等校院制度。</p>
+      <div className="homepage-card">
+        <OctopusMascot className="homepage-art"/>
+        {accountActions}
+        <PrivacyNotice/>
+      </div>
+    </main>
+  </div>
+  return <div className="user-site">
     <div className={chatProfile ? 'user-header user-header--chat' : 'user-header'}>
     <header className="site-header">
       <a className="brand" href="/" aria-label="管理学院制度服务首页"><span className="brand-icon"><OctopusMascot/></span><span>管理学院<small>制度服务平台</small></span></a>
@@ -256,15 +255,11 @@ function UserApp() {
     {chatProfile && <div className="mobile-chat-profile"><IdentityCard profile={chatProfile} edit={editProfile} logout={logout}/></div>}
     </div>
     <ErrorBox error={error}/>
-    {loading ? <main id="main-content" className="empty">正在连接服务…</main> : !profile || editing ? <main id="main-content" className={landing ? 'entry-layout entry-layout--landing' : 'entry-layout'}>
+    {loading ? <main id="main-content" className="empty">正在连接服务…</main> : !profile || editing ? <main id="main-content" className="entry-layout">
       {!profile && <section className="page-intro account-intro" aria-labelledby="account-intro-title">
         <h1 id="account-intro-title">制度咨询与办理指引</h1>
         <p className="account-intro-kicker">管理学院 · 你的校园小助手</p>
         <p>学生和家长可在这里查询学院制度，了解请假、综合测评和奖学金评定的办理条件。</p>
-        {landing && <>
-          <p>提问时可以注明业务年度。答复会列出引用的文件和条文位置，方便你核对原文及适用范围。</p>
-          <p>学院会汇总暂时无法回答的问题，并核对、补充相关资料。</p>
-        </>}
       </section>}
       <aside className="entry-intro" id="service-notes"><details className="service-disclosure" open={notesOpen} onToggle={e => setNotesOpen(e.currentTarget.open)}><summary>使用说明与服务范围<ChevronRight size={16}/></summary><div className="service-points">
         <section><BookOpen size={21} strokeWidth={1.5}/><div><h3>查询制度依据</h3><p>回答附有来源与条文定位，请结合业务年度、入学年级核对。</p></div></section>
@@ -272,14 +267,7 @@ function UserApp() {
         <section><ShieldCheck size={21} strokeWidth={1.5}/><div><h3>妥善使用登记信息</h3><p>资料由本人填写。仅凭手机号不能核验身份，也不能查询他人记录。</p></div></section>
       </div><div className="boundary"><strong>服务范围</strong><p>本平台提供制度信息参考，不代替资格认定、审批或评审决定。</p></div></details></aside>
       <div className="account-entry">
-        {landing && <div className="tactile-art"><OctopusMascot className="landing-octopus"/></div>}
-        {landing && <ul className="account-intro-topics" aria-label="可咨询事项">
-          <li>学生请假</li><li>综合测评</li><li>奖学金评定</li>
-        </ul>}
-        {!profile && <div className="account-actions" aria-label="账号操作">
-          <button type="button" className="secondary account-action" aria-pressed={entryMode === 'register'} onClick={event => { rebound(event.currentTarget); setEntryMode('register') }}>注册账号</button>
-          <button type="button" className="primary account-action" aria-pressed={entryMode === 'login'} onClick={event => { rebound(event.currentTarget); setEntryMode('login') }}>登录账号</button>
-        </div>}
+        {!profile && accountActions}
         {!profile && <PrivacyNotice/>}
         {(editing || entryMode) && <section className="entry-card">
           <div className="section-heading">
