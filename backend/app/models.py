@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, now, uid
@@ -87,7 +87,8 @@ class Chunk(Base):
 
 class Question(Base):
     __tablename__ = "questions"
-    __table_args__ = (UniqueConstraint("registration_id", "request_id"),)
+    __table_args__ = (UniqueConstraint("registration_id", "request_id"),
+                      Index("ix_questions_queue", "status", "processing_stage", "created_at", "id"))
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     registration_id: Mapped[str] = mapped_column(ForeignKey("registrations.id"), index=True)
     request_id: Mapped[str] = mapped_column(String(64))
@@ -96,6 +97,7 @@ class Question(Base):
     context: Mapped[dict] = mapped_column(JSON, default=dict)
     answer: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(30), default="pending")
+    processing_stage: Mapped[str | None] = mapped_column(String(20))
     model_mode: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -1,6 +1,7 @@
 import os
 import tempfile
 from pathlib import Path
+from time import monotonic, sleep
 
 Path("runtime/tests").mkdir(parents=True, exist_ok=True)
 TEST_ROOT = Path(tempfile.mkdtemp(prefix="dominate-tests-", dir="runtime/tests")).resolve()
@@ -85,3 +86,15 @@ def signup(client, profile, **kwargs):
     return client.post("/api/register", json={
         **profile, "password": "test-secret-strong1",
     }, **kwargs)
+
+
+def wait_for_answer(client, question_id):
+    deadline = monotonic() + 5
+    while monotonic() < deadline:
+        response = client.get(f"/api/questions/{question_id}")
+        assert response.status_code == 200
+        saved = response.json()
+        if saved["status"] == "complete":
+            return saved
+        sleep(0.02)
+    raise AssertionError(f"Question {question_id} did not finish")

@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import Document, MailJob
 from app.retrieval import build_chunks
-from conftest import signup, student
+from conftest import signup, student, wait_for_answer
 from test_knowledge import ask, publish
 
 
@@ -265,7 +265,7 @@ def test_examples_can_be_answered_and_are_withdrawn_when_source_is_disabled(admi
     assert len(examples) == 3
     for index, (question, expected) in enumerate(zip(examples, ['1月18日', '28分', 'A类'], strict=True)):
         response = client.post('/api/questions', json={'request_id': f'calendar-example-{index:02d}', 'text': question})
-        answer = client.get('/api/questions/' + response.json()['id']).json()['answer']['items'][0]
+        answer = wait_for_answer(client, response.json()['id'])['answer']['items'][0]
         assert answer['status'] == 'answered' and expected in answer['content']
         assert answer['citations'][0]['document_id'] == document_ids[index]
     assert client.post(f'/api/admin/documents/{document_ids[1]}/disable').status_code == 200
@@ -283,7 +283,9 @@ def test_alert_review_context_and_legacy_preview(admin_client):
             'conversation_id': session, 'previous_id': previous,
         })
         assert response.status_code == 202
-        return response.json()['id']
+        question_id = response.json()['id']
+        wait_for_answer(client, question_id)
+        return question_id
     session = 'a' * 32
     first = question(1, '学习压力很大', session=session)
     question(2, '这条来自其他会话', session='b' * 32)

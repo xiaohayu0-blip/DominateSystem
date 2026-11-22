@@ -4,7 +4,7 @@ from app.db import SessionLocal
 from app.cli import create_admin
 from app.models import UserAccount
 from app.security import hash_password
-from conftest import signup, student
+from conftest import signup, student, wait_for_answer
 
 
 @pytest.mark.parametrize("password", ["12345678", "abcdefgh", "abc1234", "中文密码12345678", "abcdefg１", "        "])
@@ -55,7 +55,7 @@ def test_worker_reports_real_stages_without_saving_them_in_answer(client, monkey
         return {'items': [{'question': text, 'status': 'answered', 'content': '回答正文', 'citations': []}]}
     monkeypatch.setattr('app.services.answer_question', answer)
     q = client.post('/api/questions', json={'request_id': 'progress-stage-001', 'text': '问题'}).json()
-    result = client.get('/api/questions/' + q['id']).json()
+    result = wait_for_answer(client, q['id'])
     assert seen == ['searching', 'checking', 'composing']
     assert result['status'] == 'complete' and result['progress'] is None
     assert result['answer']['items'][0]['content'] == '回答正文'

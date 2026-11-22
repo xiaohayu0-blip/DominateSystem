@@ -18,7 +18,7 @@ from .evidence_numbers import check_enumerated_counts, comparisons, normalized_n
 from .models import ApplicationSettings, Chunk, Document, Question
 from .policy_context import clarification_for, policy_query, search_policy_evidence
 from .question_planning import grouped_questions, named_branch_reply, question_clauses
-from .progress import report_progress
+from .progress import mark_model_request, report_progress, report_question_event
 from .ranking import ranking_answer
 from .scholarship import AWARD_NAMES, award_choice, scholarship_lookup, scholarship_request
 from .retrieval import DATED_BATCH_DEADLINE, GENERIC, citation, normalize_roster_query, sheet_key, terms
@@ -36,7 +36,13 @@ TECHNICAL_LIMIT_QUESTION = re.compile(
 
 
 class ModelFailure(Exception):
-    pass
+    def __init__(self, *args):
+        super().__init__(*args)
+        reason = args[0] if len(args) == 1 else None
+        if reason in ("daily_limit", "concurrency_limit", "resource_limit",
+                      "model_incomplete", "model_invalid_response", "model_missing_answer",
+                      "search_response_too_large", "search_unavailable"):
+            report_question_event("answer_failure", warning=True, reason=reason)
 
 
 class InvalidEvidence(Exception):
@@ -150,6 +156,7 @@ class DeepSeekModel:
         cfg = settings()
         try:
             with httpx.Client(timeout=cfg.model_timeout_seconds) as client:
+                mark_model_request()
                 result = client.post(cfg.deepseek_base_url.rstrip("/") + "/chat/completions",
                                      headers={"Authorization": "Bearer " + cfg.deepseek_api_key},
                                      json={"model": cfg.deepseek_model, "temperature": 0,
@@ -160,18 +167,34 @@ class DeepSeekModel:
                 choice = result.json()["choices"][0]
                 if not isinstance(choice, dict):
                     raise ValueError("invalid completion choice")
+                report_question_event("model_response", http_status=result.status_code)
                 return choice
+        except httpx.HTTPStatusError as exc:
+            report_question_event("model_failure", warning=True, reason="upstream_http",
+                                  http_status=exc.response.status_code)
+            raise ModelFailure("model_unavailable") from exc
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            reason = "invalid_response"
+            if isinstance(exc, httpx.TimeoutException):
+                reason = "upstream_timeout"
+            elif isinstance(exc, httpx.HTTPError):
+                reason = "upstream_connection_error"
+            report_question_event("model_failure", warning=True, reason=reason, error_type=type(exc).__name__)
             raise ModelFailure("model_unavailable") from exc
 
     def request_json(self, system: str, payload: dict) -> dict:
         choice = self._request_chat(system, json.dumps(payload, ensure_ascii=False),
                                     response_format={"type": "json_object"})
+        content = None
         try:
-            return json.loads(choice["message"]["content"])
+            content = choice["message"]["content"]
+            return json.loads(content)
         except (KeyError, IndexError) as exc:
+            report_question_event("model_failure", warning=True, reason="missing_content")
             raise ModelFailure("model_unavailable") from exc
         except (ValueError, TypeError) as exc:
+            reason = "missing_content" if content is None or content == "" else "invalid_json"
+            report_question_event("model_failure", warning=True, reason=reason)
             raise InvalidEvidence("model_invalid_json") from exc
 
     def request_web(self, system: str, question: str) -> dict:
@@ -355,6 +378,7 @@ def planned_questions(db, text, model):
         return [text] if clauses else []
     if not model_budget_available(db) or not semaphore.acquire(timeout=1):
         logger.warning("question_planning_fallback reason=resource_limit")
+        report_question_event("planning_fallback", reason="resource_limit")
         return [text]
     try:
         try:
@@ -1045,6 +1069,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             except ModelFailure:
                 reason = "system_error"
             except (InvalidEvidence, AttributeError, TypeError) as exc:
+                report_question_event("answer_failure", warning=True, reason="invalid_evidence",
+                                      error_type=type(exc).__name__)
                 logger.warning("model_response_error type=%s reason=%s chunk_ids=%s",
                                type(exc).__name__, str(exc) if isinstance(exc, InvalidEvidence) else "invalid_shape",
                                [source["chunk_id"] for source in citations])

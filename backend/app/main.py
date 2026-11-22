@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import hashlib
 import threading
@@ -20,7 +21,8 @@ from .config import settings
 from .conversation import QUESTION_EXAMPLES, example_answer
 from .db import SessionLocal, get_db, now
 from .qa import context_for, daily_model_limit
-from .progress import question_progress
+from .progress import log_question_event, question_progress
+from .question_queue import QuestionWorker
 from .streaming import answer_events
 from .embeddings import BGE_MODEL, bge_model
 from .retrieval import build_chunks, index_bge
@@ -28,7 +30,7 @@ from .schemas import (DailyLimitUpdate, DocumentMeta, EventUpdate, FormalReply, 
                       QuestionInput, RegisterInput, SignupInput)
 from .security import (admin, audit, hash_password, issue_session, token_hash,
                        user, verify_password)
-from .services import (ensure_evidence, finish_question, issue_data, profile,
+from .services import (ensure_evidence, issue_data, profile,
                        resolve_issues_after_publish, retest_issue, weekly)
 from .storage import digest, infer_business_year, parse_file, store, unpack_documents, validate_file
 from .vocabulary import router as vocabulary_router
@@ -56,7 +58,6 @@ def rate_limit(key: str, count: int, seconds=60):
 @asynccontextmanager
 async def lifespan(app):
     settings().validate_runtime()
-    # A crashed generation is visible as a technical failure, never erased or called missing material.
     with SessionLocal() as db:
         if settings().embedding_mode == "bge":
             if db.scalar(select(m.Chunk.id).join(m.Document).where(
@@ -65,14 +66,13 @@ async def lifespan(app):
             ).limit(1)):
                 raise RuntimeError("请先运行 python -m app.cli bge-index，再启用 BGE 检索。")
             bge_model()
-        stale = list(db.scalars(select(m.Question).where(m.Question.status == "pending")))
-        for q in stale:
-            q.status = "complete"
-            q.answer = {"items": [{"question": q.text, "status": "system_error",
-                                    "content": "上次回答处理被中断，已记录技术故障，请重新提问。", "citations": []}]}
-            db.add(m.Issue(question_id=q.id, text=q.text, reason="system_error"))
-        db.commit()
-    yield
+    worker = app.state.question_worker = QuestionWorker()
+    worker.thread.start()
+    try:
+        await asyncio.to_thread(worker.ready.wait)
+        yield
+    finally:
+        await asyncio.to_thread(worker.close)
 
 
 app = FastAPI(title="管理学院制度问答与问题处理系统", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -230,7 +230,7 @@ def question_examples(person=Depends(user), db: DBSession = Depends(get_db)):
 
 
 @app.post("/api/questions", status_code=202)
-def submit(data: QuestionInput, tasks: BackgroundTasks, person=Depends(user), db: DBSession = Depends(get_db)):
+def submit(data: QuestionInput, request: Request, person=Depends(user), db: DBSession = Depends(get_db)):
     request_payload = data.model_dump_json(exclude={"conversation_id"} if data.conversation_id is None else None)
     request_hash = hashlib.sha256(request_payload.encode()).hexdigest()
     existing = db.scalar(select(m.Question).where(m.Question.registration_id == person.id,
@@ -254,7 +254,8 @@ def submit(data: QuestionInput, tasks: BackgroundTasks, person=Depends(user), db
     if previous:
         context["previous_id"] = previous.id
     q = m.Question(registration_id=person.id, request_id=data.request_id, text=data.text,
-                   snapshot=profile(db, person), context=context, model_mode=settings().model_mode)
+                   snapshot=profile(db, person), context=context, model_mode=settings().model_mode,
+                   processing_stage=None if danger else "queued")
     db.add(q)
     try:
         db.flush()
@@ -269,8 +270,12 @@ def submit(data: QuestionInput, tasks: BackgroundTasks, person=Depends(user), db
                                                m.Question.request_id == data.request_id))
         if not q:
             raise HTTPException(503, "未能保存问题，请重试")
+        if q.text != data.text or q.context.get("request_hash", request_hash) != request_hash:
+            raise HTTPException(409, "请求编号已用于另一个问题")
+        return question_response(db, q)
     if q.status == "pending":
-        tasks.add_task(finish_question, q.id)
+        log_question_event(q.id, "queued")
+        request.app.state.question_worker.wake.set()
     return question_response(db, q)
 
 
@@ -282,9 +287,12 @@ def question_response(db, q):
         alert = {"message": HELP_TEXT, "mail_mode": job.mode, "status": job.status,
                  "notice": "演示预警已生成，不会真实发送邮件。" if job.mode == "mock" else
                  "预警任务已记录；系统无法确认收件人是否阅读，请不要等待邮件通知。"}
+    progress = None
+    if q.status == "pending":
+        progress = "queued" if q.processing_stage == "queued" else question_progress(q.id)
     return {"id": q.id, "text": q.text, "status": q.status, "answer": q.answer,
             "created_at": q.created_at, "alert": alert,
-            "progress": question_progress(q.id) if q.status == "pending" else None}
+            "progress": progress}
 
 
 @app.get("/api/questions/{question_id}")

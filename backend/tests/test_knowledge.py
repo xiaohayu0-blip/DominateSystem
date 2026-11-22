@@ -11,7 +11,7 @@ from app.models import Chunk, Document
 from app.qa import DeepSeekModel, ExtractiveMock, ModelFailure
 from app.retrieval import build_chunks
 from app.storage import parse_file, store
-from conftest import signup, student
+from conftest import signup, student, wait_for_answer
 
 
 def publish(title="奖学金办法", content="奖学金申请材料包括申请表和成绩单，由学院人工审核。", year=None, grade=None,
@@ -51,7 +51,7 @@ def ask(client, text, **kwargs):
     data = {"request_id": uuid.uuid4().hex, "text": text, **kwargs}
     response = client.post("/api/questions", json=data)
     assert response.status_code == 202, response.text
-    return client.get("/api/questions/" + response.json()["id"]).json()
+    return wait_for_answer(client, response.json()["id"])
 
 
 def test_winter_break_start_and_duration_are_one_question():

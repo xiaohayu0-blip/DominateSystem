@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.db import SessionLocal
 from app.main import app
 from app.models import Question
-from conftest import signup, student
+from conftest import signup, student, wait_for_answer
 
 
 def frames(text):
@@ -20,6 +20,7 @@ def frames(text):
 def test_stream_sends_single_characters_then_exact_saved_answer_without_regenerating(client, monkeypatch):
     signup(client, student())
     q = client.post('/api/questions', json={'request_id': 'stream-replay-001', 'text': '寝室长加分'}).json()
+    wait_for_answer(client, q['id'])
     with SessionLocal() as db:
         saved = db.get(Question, q['id'])
         saved.answer = {'items': [

@@ -10,7 +10,7 @@ from .db import SessionLocal, now
 from .models import Admin, ChildEntry, Document, EmergencyEvent, Issue, MailJob, Question, WeeklyMailItem
 from .qa import retrieval_query
 from .conversation import answer_turn as answer_question
-from .progress import report_progress, track_progress
+from .progress import report_progress, report_question_event, track_progress
 from .retrieval import retriever
 from .security import audit
 
@@ -72,15 +72,30 @@ def group_existing_issues(db):
 
 
 def finish_question(question_id, factory=SessionLocal):
-    with track_progress(question_id):
+    model_started = False
+
+    def mark_started():
+        nonlocal model_started
+        if model_started:
+            return
+        with factory() as marker_db:
+            result = marker_db.execute(update(Question).where(
+                Question.id == question_id, Question.status == "pending", Question.processing_stage == "running",
+            ).values(processing_stage="model_started"))
+            if result.rowcount != 1:
+                raise RuntimeError("Question execution is no longer active")
+            marker_db.commit()
+        model_started = True
+
+    with track_progress(question_id, mark_started):
         with factory() as db:
             q = db.get(Question, question_id)
-            if not q or q.status != "pending":
+            if not q or q.status != "pending" or q.processing_stage != "running":
                 return
             try:
                 answer = answer_question(db, q.text, q.context)
-            except Exception:
-                logger.exception("Question answering failed for question %s", question_id)
+            except Exception as exc:
+                report_question_event("answer_exception", warning=True, error_type=type(exc).__name__)
                 answer = {"items": [{"question": q.text, "status": "system_error",
                                      "content": "服务暂时不可用，已记录技术故障。", "citations": []}],
                           "context": q.context, "model_mode": q.model_mode}
@@ -90,13 +105,14 @@ def finish_question(question_id, factory=SessionLocal):
                 "answered", "historical_reference", "general_answer", "web_answer", "web_unavailable", "daily_limit"}]
             failed_items.extend({**item, "status": "missing_material"} for item in answer["items"]
                                 if item.get("knowledge_gap"))
+            # Release the retrieval snapshot so it cannot conflict with the committed model marker.
+            db.rollback()
             if failed_items:
-                # End the retrieval transaction before acquiring the grouping lock.
-                db.rollback()
                 lock_issue_grouping(db)
-                q = db.get(Question, question_id, populate_existing=True)
-                if not q or q.status != "pending":
-                    return
+            q = db.get(Question, question_id, populate_existing=True, with_for_update=True)
+            if not q or q.status != "pending":
+                return
+            if failed_items:
                 q.context = resolved_context
                 roots = {}
                 for issue, context in db.execute(open_issue_roots()).all():
@@ -114,6 +130,7 @@ def finish_question(question_id, factory=SessionLocal):
                         root.revision += 1
             q.context = resolved_context
             q.answer, q.status, q.completed_at = answer, "complete", now()
+            q.processing_stage = None
             # Clarification can only resolve within same registration + explicit previous question.
             previous = db.get(Question, q.context.get("previous_id", ""))
             if previous and previous.registration_id == q.registration_id and all(
@@ -126,6 +143,7 @@ def finish_question(question_id, factory=SessionLocal):
                                                       "question_id": q.id}]
                     issue.revision += 1
             db.commit()
+            report_question_event("completed", outcome=",".join(item["status"] for item in answer["items"]))
 
 
 def issue_data(db, issue):

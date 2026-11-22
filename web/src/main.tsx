@@ -350,13 +350,14 @@ function AnswerView({ answer, open, student = false }: { answer: Answer; open?: 
 
 const progressText = {
   received: '收到问题啦',
+  queued: '正在排队，轮到后会自动回答',
   searching: '正在查找学院资料',
   checking: '正在核对适用年级',
   composing: '正在整理回答',
 }
 
 function ProgressNotice({ stage = 'received' }: { stage?: NonNullable<Question['progress']> }) {
-  const Icon = { received: CheckCircle2, searching: Search, checking: ShieldCheck, composing: FileText }[stage]
+  const Icon = { received: CheckCircle2, queued: CheckCircle2, searching: Search, checking: ShieldCheck, composing: FileText }[stage]
   return <div className="progress-notice" role="status" aria-atomic="true" data-stage={stage}>
     <span className="progress-notice-icon" aria-hidden="true"><Icon size={17}/></span>
     <span className="progress-notice-label" key={stage}>{progressText[stage]}</span>
