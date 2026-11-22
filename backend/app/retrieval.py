@@ -47,6 +47,82 @@ CLASS_CODE = re.compile(r"([a-z\u4e00-\u9fff]{2,8})(1\d{2})(\d{2})", re.IGNORECA
 CLASS_GROUP = re.compile(r"(?:20)?(\d{2})级")
 CLASS_NUMBER = re.compile(r"(\d{1,2}|[一二三四五六七八九十])班")
 CLASS_NUMBERS = "一二三四五六七八九十"
+EMPTY_TITLE = re.compile(
+    r"(?:班主任|老师).{0,12}(?:没写|没填|没有填|未填|未登记|空白).{0,4}职称|"
+    r"职称.{0,6}(?:没写|没填|没有填|未填|未登记|空白)"
+)
+
+
+def roster_fields(query):
+    fields = []
+    if "班主任" in query and ("职称" not in query or re.search(r"是谁|哪位|哪个|姓名|名字", query)):
+        fields.append("班主任")
+    if "辅导员" in query:
+        fields.append("辅导员")
+    if "职称" in query:
+        fields.append("班主任职称")
+    return fields or ["班主任"]
+
+
+def roster_columns(rows):
+    aliases = {"职称": "班主任职称", "班主任姓名": "班主任", "辅导员姓名": "辅导员"}
+    headers = {}
+    for chunk, _ in rows:
+        if not chunk.location.startswith("工作表") or "班级" not in chunk.text:
+            continue
+        fields = [field.strip() for field in chunk.text.split("|")]
+        columns = {aliases.get(field, field): index for index, field in enumerate(fields) if field}
+        if "班级" in columns and ("班主任" in columns or "辅导员" in columns):
+            headers.setdefault(sheet_key(chunk), columns)
+    return headers
+
+
+def roster_cell(row, columns, field):
+    index = columns.get(field)
+    return row[index] if index is not None and index < len(row) else None
+
+
+def scoped_roster_matches(rows, headers, query):
+    fields = roster_fields(query)
+    blank_title = bool(EMPTY_TITLE.search(query))
+    grade = CLASS_GROUP.search(query)
+    if not blank_title and (fields != ["辅导员"] or not grade or CLASS_NUMBER.search(query)):
+        return None
+    matches, people, scoped_rows = [], set(), []
+    for chunk, doc in rows:
+        columns = headers.get(sheet_key(chunk))
+        if not columns:
+            continue
+        row = [value.strip() for value in chunk.text.split("|")]
+        code = CLASS_CODE.fullmatch(roster_cell(row, columns, "班级") or "")
+        if not code or grade and grade[1] != code[2][1:]:
+            continue
+        major = code[1].casefold()
+        if not blank_title and major not in query.casefold():
+            continue
+        if blank_title:
+            title = roster_cell(row, columns, "班主任职称")
+            if roster_cell(row, columns, "班主任") and title is not None:
+                scoped_rows.append((chunk, doc, major, matches_roster(code[0], query), title))
+            continue
+        people.add(roster_cell(row, columns, "辅导员"))
+        matches.append((chunk, doc))
+    if blank_title:
+        majors = {major for _, _, major, _, _ in scoped_rows if major in query.casefold()}
+        if any(exact for _, _, _, exact, _ in scoped_rows):
+            scoped_rows = [row for row in scoped_rows if row[3]]
+        elif re.search(r"1\d{4}(?!\d)", query):
+            return None
+        elif majors:
+            scoped_rows = [row for row in scoped_rows if row[2] in majors]
+        matches = [(chunk, doc) for chunk, doc, _, _, title in scoped_rows if not title]
+        if matches:
+            return matches, "roster_match"
+        if scoped_rows:
+            return [(chunk, doc) for chunk, doc, _, _, _ in scoped_rows[:8]], "roster_no_blank_title"
+    if matches:
+        return (matches[:8], "roster_match") if len(people) == 1 and all(people) else ([], "needs_clarification")
+    return None
 
 
 def terms(text: str) -> set[str]:
@@ -222,14 +298,9 @@ class HybridRetriever:
         roster_matches, inferred_roster_matches = [], []
         roster_role = "辅导员" if "辅导员" in text and "班主任" not in text else "班主任"
         roster_query = any(role in text for role in ("班主任", "辅导员", "职称")) or bool(class_codes)
-        roster_headers = {}
-        if roster_query:
-            for chunk, _ in rows:
-                if not chunk.location.startswith("工作表") or "班级" not in chunk.text:
-                    continue
-                fields = [field.strip() for field in chunk.text.split("|")]
-                if "班级" in fields and roster_role in fields:
-                    roster_headers[sheet_key(chunk)] = (fields.index("班级"), fields.index(roster_role))
+        roster_headers = roster_columns(rows) if roster_query else {}
+        if scoped := scoped_roster_matches(rows, roster_headers, text):
+            return scoped
         for chunk, doc in rows:
             if counseling_record and not (
                     "心理咨询" in chunk.text and re.search(r"档案|保密|记录", chunk.text)):
@@ -242,15 +313,15 @@ class HybridRetriever:
                 continue
             tabular = doc.original_name.lower().endswith((".xlsx", ".csv"))
             exact_class = bool(tabular and class_codes & terms(chunk.text))
-            roster_columns = roster_headers.get(sheet_key(chunk)) if tabular and roster_query else None
+            columns = roster_headers.get(sheet_key(chunk)) if tabular and roster_query else None
             roster_row = inferred_row = False
-            if roster_columns:
+            if columns:
                 fields = [field.strip() for field in chunk.text.split("|")]
-                class_index, role_index = roster_columns
-                if len(fields) <= max(class_index, role_index) or not fields[role_index]:
+                class_value = roster_cell(fields, columns, "班级")
+                if not class_value or roster_role not in columns:
                     continue
-                roster_row = matches_roster(fields[class_index], text)
-                inferred_row = not roster_row and inferred_roster_match(fields[class_index], text)
+                roster_row = matches_roster(class_value, text)
+                inferred_row = not roster_row and inferred_roster_match(class_value, text)
                 if not (roster_row or inferred_row):
                     continue
             elif tabular:

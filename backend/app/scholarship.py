@@ -4,9 +4,10 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from .models import Chunk, Document
+from .policy_scope import audience
 from .question_planning import ALL_BRANCHES
 from .retrieval import citation
 
@@ -85,20 +86,29 @@ def scholarship_lookup(db, request, context, *, compact=False):
                 "clarification_kind": "scholarship_amount"}
     title = "本科生奖学金评定管理办法" if award == "学业奖学金" else award
     rows = db.execute(select(Chunk, Document).join(Document).where(
-        Document.status == "published", Document.parse_status == "ready", Document.title.contains(title),
+        Document.status == "published", Document.parse_status == "ready",
+        or_(Document.title.contains(title), Document.title.contains("学生手册")),
     ).order_by(Document.id, Chunk.location, Chunk.id)).all()
     year = context["business_year"]
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
     asof = today.isoformat() if year == today.year else f"{year}-12-31"
     candidates = []
     for chunk, document in rows:
-        if (document.business_year not in (None, year)
+        if (audience(document.title) == "研究生"
+                or document.business_year not in (None, year) and not document.effective_from
                 or document.admission_year not in (None, context.get("admission_year"))
                 or document.effective_from and document.effective_from > asof
                 or document.effective_to and document.effective_to < asof
                 or not matching_clause(chunk.text, kind, award)):
             continue
         text = re.sub(r"\s+", " ", chunk.text).strip()
+        specialized = title in document.title
+        if not specialized:
+            clauses = [sentence.strip() for sentence in re.split(r"(?<=[。！？；])", text)
+                       if matching_clause(sentence, kind, award)]
+            if len(clauses) != 1:
+                continue
+            text = clauses[0]
         text = re.sub(r"^[（(][一二三四五六七八九十]+[）)]\s*", "", text)
         prefix = f"按{year}年版《{document.title.rsplit('.', 1)[0]}》：\n" if document.business_year else ""
         if compact and prefix:
@@ -108,7 +118,7 @@ def scholarship_lookup(db, request, context, *, compact=False):
                        if matching_clause(sentence, kind, award)]
             if len(clauses) == 1:
                 text = clauses[0]
-        candidates.append((document.business_year == year, prefix + text, chunk, document))
+        candidates.append(((document.business_year == year, specialized), prefix + text, chunk, document))
     if candidates:
         best = max(row[0] for row in candidates)
         tied = {text: (chunk, doc) for exact, text, chunk, doc in candidates if exact == best}

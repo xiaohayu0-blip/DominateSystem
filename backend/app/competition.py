@@ -17,6 +17,37 @@ SOURCE_CATEGORIES = {"A+类": "A+类学科竞赛", "其他A类": "其他A类学�
                      "B/C类": "B/C类学科竞赛", "文体竞赛": "文体竞赛"}
 TEAM_SOURCE_NOTE = "团队项目由项目负责人根据实际情况确定，工作量分配系数的总和为1.0或按照如下办法分配。"
 TEAM_SIZE_REPLY = re.compile(r"(?:团队|队伍)?(?:总共|一共|共|有)?\s*([二三四五六七八]|[2-8])\s*(?:个)?人(?:团队|合作|组队)?")
+LEVEL_PATTERN = re.compile(r"国家级|国赛|省市区级|省（市、区）级|省级|市级|区级|省赛|市赛|区赛|校级|校赛")
+SCORING_QUESTION = re.compile(r"加分|多少分|计分|得分|加几分|综测|综合测评")
+
+
+def competition_level(label):
+    if label in {"国家级", "国赛"}:
+        return "国家级"
+    if label in {"校级", "校赛"}:
+        return "校级"
+    return "省市区级"
+
+
+def competition_level_evidence(db, query, context, evidence):
+    if not SCORING_QUESTION.search(query) or not re.search(r"竞赛|赛事|比赛|[国省市区校]赛", query):
+        return evidence
+    levels = {competition_level(value) for value in LEVEL_PATTERN.findall(query)}
+    if len(levels) != 1:
+        return evidence
+    level, = levels
+    rows = db.execute(select(Chunk, Document).join(Document).where(
+        Document.status == "published", Document.parse_status == "ready",
+        Document.business_year == context["business_year"], Chunk.location.contains(SCORE_LOCATION_MARKER),
+    ).order_by(Chunk.location)).all()
+    labels = {"国家级", "省市区级", "省（市、区）级", "校级"}
+    selected = [(chunk, doc) for chunk, doc in rows
+                if (label := chunk.location.split(SCORE_LOCATION_MARKER)[-1]) in labels
+                and competition_level(label) == level]
+    other = [(chunk, doc) for chunk, doc in evidence
+             if SCORE_LOCATION_MARKER not in chunk.location or
+             chunk.location.split(SCORE_LOCATION_MARKER)[-1] not in labels]
+    return selected + other
 
 
 def ordinal(value):
@@ -37,12 +68,12 @@ class CompetitionScore:
 def competition_score(db, query, context):
     query = unicodedata.normalize("NFKC", query).upper()
     category = re.search(r"(A\s*\+|A|B\s*/\s*C|B|C)\s*(?:类|(?=学科竞赛|竞赛|赛事|比赛))|文体(?:竞赛|赛事|比赛)", query)
-    level = re.search(r"国家级|国赛|省市区级|省级|市级|区级|省赛|市赛|区赛|校级|校赛", query)
+    level = LEVEL_PATTERN.search(query)
     participation = re.search(r"未获奖|没获奖|没拿奖|没有获奖", query)
     if not category or not (level or participation) or not re.search(r"竞赛|赛事|比赛|[国省市区校]赛", query):
         return None
     team = re.search(r"团队|队伍|队内", query)
-    if not re.search(r"加分|多少分|计分|得分|加几分", query):
+    if not SCORING_QUESTION.search(query):
         return None
     award_text = query[:team.start()] if team else query
     team_text = query[team.start():] if team else ""
@@ -75,7 +106,7 @@ def competition_score(db, query, context):
             return None
         source["excerpt"] = line + "\n同一学生参与多个项目，不累加。"
         return CompetitionScore([source], numbers[1], numbers[1], "仅适用于团队参加学科竞赛但未获奖的情形")
-    level_name = "国家级" if level[0] in {"国家级", "国赛"} else "校级" if level[0] in {"校级", "校赛"} else "省市区级"
+    level_name = competition_level(level[0])
     award_name = award[0] if award else f"{equivalent}等奖"
     category_label = rf"(?:{re.escape(SOURCE_CATEGORIES[series])}|{re.escape(series)})"
     level_label = r"(?:省（市、区）级|省市区级)" if level_name == "省市区级" else level_name

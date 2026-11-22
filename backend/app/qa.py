@@ -16,12 +16,14 @@ from .competition import TEAM_SIZE_REPLY, competition_score
 from .competition_catalog import competition_classification
 from .evidence_numbers import check_enumerated_counts, comparisons, normalized_numbers, quantities, scenario_quantities
 from .models import ApplicationSettings, Chunk, Document, Question
-from .policy_context import clarification_for, policy_query, search_policy_evidence
+from .policy_context import clarification_for, policy_query, roster_lookup_question, search_policy_evidence
+from .policy_scope import scope_citations
 from .question_planning import grouped_questions, named_branch_reply, question_clauses
 from .progress import mark_model_request, report_progress, report_question_event
 from .ranking import ranking_answer
 from .scholarship import AWARD_NAMES, award_choice, scholarship_lookup, scholarship_request
-from .retrieval import DATED_BATCH_DEADLINE, GENERIC, citation, normalize_roster_query, sheet_key, terms
+from .retrieval import (DATED_BATCH_DEADLINE, GENERIC, citation, normalize_roster_query, roster_cell,
+                        roster_columns, roster_fields, sheet_key, terms)
 from .schemas import scrub
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,9 @@ class DeepSeekModel:
             "提供的资料均可向学生展示，不因个人记录、实时安排、联系方式或资格核对等主题拒答。"
             "可以依据资料解释资格条件、核对题设及给出参考计算，不宣称已完成现实中的审批或操作。"
             "年度、年级和有效期不同的资料要标明适用范围，不将历史依据当成现行规定。"
+            "policy_applicability为applicable表示有效期覆盖所问日期，matching_year表示资料年度相符。"
+            "expired、not_yet_effective、other_cohort、other_audience只作对照，不作为当前对象的规则；"
+            "other_year和undated的适用范围需结合条文判断。区分全国标准和地区或本校的具体办法。"
             "不得编造资料没有的事实。输出JSON对象："
             '{"answer":"直接回答问题的简短说明","needs_search":false,"needs_clarification":false,'
             '"selections":[{"chunk_id":"已给出的ID","start_line":1,"end_line":2}]}。'
@@ -657,20 +662,22 @@ def retrieval_query(part, context):
     return re.sub(year_prefix, "", part).strip(" ，,") or part
 
 
-def roster_citation(db, chunk, source, field):
-    if not chunk.location.startswith("工作表"):
+def roster_citation(chunk, source, headers, fields):
+    columns = headers.get(sheet_key(chunk))
+    if not columns:
         return source
-    _, sheet = sheet_key(chunk)
-    rows = db.scalars(select(Chunk.text).where(
-        Chunk.document_id == chunk.document_id, Chunk.location.startswith(sheet + " 第"),
-        Chunk.text.contains("班级"), Chunk.text.contains(field),
-    ))
-    for row in rows:
-        headers = [field.strip() for field in row.split("|")]
-        if "班级" in headers and field in headers:
-            value = chunk.text.split("|")[headers.index(field)].strip()
-            return {**source, "roster_field": field, "roster_value": value}
-    return source
+    row = [value.strip() for value in chunk.text.split("|")]
+    facts = {field: roster_cell(row, columns, field) for field in fields if field in columns}
+    return {**source, "roster_class": roster_cell(row, columns, "班级"), "roster_facts": facts}
+
+
+def roster_facts_text(citations):
+    lines = []
+    for source in citations:
+        if facts := source.get("roster_facts"):
+            values = "，".join(f"{field}：{value if value else '该栏未填写'}" for field, value in facts.items())
+            lines.append(f"{source['roster_class']}：{values}。")
+    return "\n".join(lines)
 
 
 def calendar_period(db, query, context):
@@ -872,7 +879,8 @@ def historical_reference(db, query, context):
 def scope_notice(citations, context):
     year = context["business_year"]
     years = {source["business_year"] for source in citations if source["business_year"] is not None}
-    if years and all(source["business_year"] is not None for source in citations) and max(years) < year:
+    applicable = any(source.get("policy_applicability") == "applicable" for source in citations)
+    if not applicable and years and all(source["business_year"] is not None for source in citations) and max(years) < year:
         label = "、".join(str(value) for value in sorted(years))
         return f"目前暂无{year}年相关资料。以下为{label}年资料，仅供历史参考。\n\n", True
     if years - {year}:
@@ -895,7 +903,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
     model = ExtractiveMock() if settings().model_mode == "mock" else DeepSeekModel()
     clarification_options = context.get("_clarification_options", [])
     full_query = policy_query(retrieval_query(text, context))
-    single_item = context.get("_planned_task") or clarification_for(full_query) or scholarship_request(full_query)
+    single_item = (context.get("_planned_task") or clarification_for(full_query)
+                   or roster_lookup_question(full_query) or scholarship_request(full_query))
     parts = [text] if single_item else planned_questions(db, text, model)
     for part in parts:
         query = policy_query(normalize_roster_query(retrieval_query(part, context)))
@@ -977,16 +986,24 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                     special = ""
             citations = [citation(c, d) for c, d in evidence]
             if special == "roster_match":
-                field = "班主任"
-                if "职称" in query:
-                    field = "班主任职称"
-                elif "辅导员" in query and "班主任" not in query:
-                    field = "辅导员"
-                citations = [roster_citation(db, chunk, source, field)
+                header_rows = db.execute(select(Chunk, Document).join(Document).where(
+                    Chunk.document_id.in_({chunk.document_id for chunk, _ in evidence}),
+                    Chunk.location.startswith("工作表"), Chunk.text.contains("班级"),
+                ).order_by(Chunk.location)).all()
+                headers = roster_columns(header_rows)
+                fields = roster_fields(query)
+                citations = [roster_citation(chunk, source, headers, fields)
                              for (chunk, _), source in zip(evidence, citations, strict=True)]
+        citations = [source for source in scope_citations(
+            citations, query, context, datetime.now(ZoneInfo("Asia/Shanghai")).date(),
+        ) if source["policy_applicability"] != "other_audience"]
         report_progress("checking")
-        if special == "roster_match" and isinstance(model, ExtractiveMock):
-            content = "\n\n".join(source["excerpt"] for source in citations)
+        if special == "roster_no_blank_title" and citations:
+            results.append({"question": part, "status": "answered", "citations": citations, "_compose": True,
+                            "content": "所问范围内的班主任，表中均已填写职称。"})
+            continue
+        if special == "roster_match" and citations and isinstance(model, ExtractiveMock):
+            content = roster_facts_text(citations) or "\n\n".join(source["excerpt"] for source in citations)
             if re.search(r"专业成长|思想成长", query):
                 content = "以下是班主任表的对应班级记录，表中没有细分班主任角色。\n\n" + content
             results.append({"question": part, "status": "answered", "content": content,
@@ -1017,9 +1034,8 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             content = f"按题设的「{condition}」，该单项评为「{rating}」。原文：{rule}"
         elif catalog_grades:
             content = source_answer(citations)
-        elif special == "roster_match" and all(c.get("roster_value") for c in citations):
-            content = "表中登记的信息：\n" + "\n".join(
-                f"{c['roster_field']}为{c['roster_value']}。" for c in citations)
+        elif special == "roster_match" and (facts := roster_facts_text(citations)):
+            content = facts
         if re.search(r"大[一二三四]|今年入学|往年", part) and not context.get("admission_year") and not citations:
             reason = "needs_clarification"
         elif not citations and not reason and not (clarification_options and isinstance(model, DeepSeekModel)):
@@ -1081,7 +1097,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             if historical:
                 reason = "historical_reference"
         content = MESSAGES.get(reason, content) if reason else content
-        if reason == "needs_clarification" and re.search(r"班主任|辅导员", query):
+        if reason == "needs_clarification" and roster_lookup_question(query):
             content = "请补充专业全称和完整班号，以便核对对应老师。"
         displayed_citations = citations if reason in {"", "document_conflict", "historical_reference"} else []
         if allow_history and reason == "missing_material" and not DATED_BATCH_DEADLINE.search(part):
