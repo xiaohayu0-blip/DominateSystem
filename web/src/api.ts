@@ -48,7 +48,8 @@ export type Profile = { id?: string; role: 'student' | 'parent'; name: string; p
 export type Citation = { chunk_id: string; document_id: string; title: string; publisher: string; version: string; location: string; excerpt: string; business_year: number | null; admission_year: number | null; effective_from: string | null; effective_to: string | null; source_status?: string; material_mode: string }
 export type WebSource = { id: string; title: string; url: string; excerpt: string; published_at: string | null; retrieved_at: string }
 export type Answer = { items: { question: string; status: string; content: string; citations: Citation[]; web_sources?: WebSource[] }[]; context?: { business_year: number; admission_year?: number; followup_question?: string }; notice?: string }
-export type Question = { id: string; text: string; status: string; answer: Answer; created_at: string; progress?: 'received' | 'queued' | 'searching' | 'checking' | 'composing' | null; snapshot?: Profile; alert: null | { message: string; mail_mode: string; status: string; notice: string } }
+export type ReplyFeedback = { item_index: number; rating: 'like' | 'dislike' | null; comment: string | null; updated_at: string }
+export type Question = { id: string; text: string; status: string; answer: Answer; feedback?: ReplyFeedback[]; created_at: string; progress?: 'received' | 'queued' | 'searching' | 'checking' | 'composing' | null; snapshot?: Profile; alert: null | { message: string; mail_mode: string; status: string; notice: string } }
 
 type AnswerEvent =
   | { type: 'progress'; stage: NonNullable<Question['progress']> }

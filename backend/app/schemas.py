@@ -66,6 +66,17 @@ class QuestionInput(StrictModel):
     conversation_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
+class QuestionFeedbackInput(StrictModel):
+    rating: Literal["like", "dislike"] | None = None
+    comment: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def has_feedback(self):
+        if self.rating is None and self.comment is None:
+            raise ValueError("请选择评价或填写反馈内容")
+        return self
+
+
 class DocumentMeta(StrictModel):
     title: str = Field(min_length=1, max_length=200)
     publisher: str = Field(default="", max_length=200)

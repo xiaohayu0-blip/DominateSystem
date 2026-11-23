@@ -12,6 +12,8 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Requ
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
@@ -29,7 +31,7 @@ from .streaming import answer_events
 from .embeddings import BGE_MODEL, bge_model
 from .retrieval import build_chunks, index_bge
 from .schemas import (DailyLimitUpdate, DocumentMeta, EventUpdate, FormalReply, IssueUpdate, LoginInput, MergeInput,
-                      QuestionInput, RegisterInput, SignupInput)
+                      QuestionFeedbackInput, QuestionInput, RegisterInput, SignupInput)
 from .security import (admin, audit, hash_password, issue_session, token_hash,
                        user, verify_password)
 from .services import (ensure_evidence, issue_data, profile,
@@ -281,7 +283,11 @@ def submit(data: QuestionInput, request: Request, person=Depends(user), db: DBSe
     return question_response(db, q)
 
 
-def question_response(db, q):
+def feedback_data(row):
+    return {"item_index": row.item_index, "rating": row.rating, "comment": row.comment, "updated_at": row.updated_at}
+
+
+def question_response(db, q, feedback=None):
     event = db.scalar(select(m.EmergencyEvent).where(m.EmergencyEvent.question_id == q.id))
     alert = None
     if event:
@@ -292,7 +298,11 @@ def question_response(db, q):
     progress = None
     if q.status == "pending":
         progress = "queued" if q.processing_stage == "queued" else question_progress(q.id)
-    return {"id": q.id, "text": q.text, "status": q.status, "answer": q.answer,
+    if feedback is None:
+        feedback = [] if q.status != "complete" else [feedback_data(row) for row in db.scalars(
+            select(m.QuestionFeedback).where(m.QuestionFeedback.question_id == q.id).order_by(m.QuestionFeedback.item_index)
+        )]
+    return {"id": q.id, "text": q.text, "status": q.status, "answer": q.answer, "feedback": feedback,
             "created_at": q.created_at, "alert": alert,
             "progress": progress}
 
@@ -303,6 +313,27 @@ def get_question(question_id: str, person=Depends(user), db: DBSession = Depends
     if q.registration_id != person.id:
         raise HTTPException(404, "记录不存在或无权访问")
     return question_response(db, q)
+
+
+@app.patch("/api/questions/{question_id}/feedback/{item_index}")
+def save_question_feedback(question_id: str, item_index: int, data: QuestionFeedbackInput,
+                           person=Depends(user), db: DBSession = Depends(get_db)):
+    q = required(db, m.Question, question_id)
+    if q.registration_id != person.id:
+        raise HTTPException(404, "记录不存在或无权访问")
+    if q.status != "complete" or not 0 <= item_index < len(q.answer.get("items", [])):
+        raise HTTPException(404, "未找到可反馈的回复")
+    rate_limit("question-feedback:" + person.id, 60)
+    changes = data.model_dump(exclude_none=True)
+    changes["updated_at"] = now()
+    insert = sqlite_insert if db.get_bind().dialect.name == "sqlite" else postgres_insert
+    statement = insert(m.QuestionFeedback).values(question_id=q.id, item_index=item_index, **changes)
+    row = db.execute(statement.on_conflict_do_update(
+        index_elements=[m.QuestionFeedback.question_id, m.QuestionFeedback.item_index], set_=changes,
+    ).returning(m.QuestionFeedback)).scalar_one()
+    result = feedback_data(row)
+    db.commit()
+    return result
 
 
 @app.get("/api/questions/{question_id}/stream")
@@ -640,11 +671,21 @@ def people(actor=Depends(admin), db: DBSession = Depends(get_db)):
 
 
 @app.get("/api/admin/questions")
-def questions(registration_id: str = "", actor=Depends(admin), db: DBSession = Depends(get_db)):
+def questions(registration_id: str = "", feedback_only: bool = False, actor=Depends(admin),
+              db: DBSession = Depends(get_db)):
     query = select(m.Question).order_by(m.Question.created_at.desc())
     if registration_id:
         query = query.where(m.Question.registration_id == registration_id)
-    result = [{**question_response(db, q), "snapshot": q.snapshot, "context": q.context} for q in db.scalars(query)]
+    if feedback_only:
+        query = query.where(select(m.QuestionFeedback.question_id).where(m.QuestionFeedback.question_id == m.Question.id).exists())
+    feedback_by_question = defaultdict(list)
+    feedback_query = select(m.QuestionFeedback).where(m.QuestionFeedback.question_id.in_(
+        query.with_only_columns(m.Question.id).order_by(None)
+    )).order_by(m.QuestionFeedback.item_index)
+    for row in db.scalars(feedback_query):
+        feedback_by_question[row.question_id].append(feedback_data(row))
+    result = [{**question_response(db, q, feedback_by_question.get(q.id, [])), "snapshot": q.snapshot,
+               "context": q.context} for q in db.scalars(query)]
     audit(db, actor, "questions_view", registration_id or "all")
     db.commit()
     return result

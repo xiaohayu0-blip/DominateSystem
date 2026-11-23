@@ -1,0 +1,17 @@
+.reply-feedback { margin-top: .25rem; }
+.reply-feedback-actions { display: flex; align-items: center; gap: .2rem; color: var(--muted, #52606b); }
+.reply-feedback-actions button {
+  display: grid; place-items: center; min-width: 28px; min-height: 28px;
+  padding: 0; border: 0; border-radius: 6px; color: inherit; background: transparent; box-shadow: none;
+}
+.reply-feedback-actions button:hover,
+.reply-feedback-actions button[aria-pressed="true"],
+.reply-feedback-actions button[aria-expanded="true"],
+.reply-feedback-actions button[data-commented="true"] { color: #204b69; background: #e6eef5; }
+.reply-feedback-actions button:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+.reply-feedback-form { display: grid; justify-items: start; gap: .4rem; margin-top: .4rem; max-width: 34rem; }
+.reply-feedback-form textarea { width: 100%; min-height: 3.75rem; resize: vertical; }
+.reply-feedback-form button { padding: .3rem .65rem; min-height: 30px; }
+.reply-feedback-error { color: #96312a; }
+.reply-feedback-record { margin-top: .5rem; padding: .4rem .65rem; border-inline-start: 2px solid #9db7c9; }
+.reply-feedback-record p { margin: .25rem 0 0; overflow-wrap: anywhere; }

@@ -5,6 +5,7 @@ import { ArrowUpRight, ArrowUp, BookOpen, FileText, ChevronRight, ShieldCheck, L
 import { api, ApiError, downloadIssueExport, streamAnswer, label, stamp, type Profile, type Child, type Citation, type Question, type Issue, type Doc, type Weekly, type Emergency, type EventConversation, type Review, type Modes, type Answer, type History, type WebSource } from './api'
 import { plainAnswer } from './answer-text'
 import { VocabularyPage } from './VocabularyPage'
+import { FeedbackControls, FeedbackRecord } from './ReplyFeedback'
 import './style.css'
 import './interface.css'
 import './tactile.css'
@@ -293,7 +294,9 @@ function WebSourceCard({ source, url }: { source: WebSource; url: URL }) {
   </a>
 }
 
-function AnswerView({ answer, open, student = false }: { answer: Answer; open?: (c: Citation) => void; student?: boolean }) {
+function AnswerView({ answer, open, student = false, question }: {
+  answer: Answer; open?: (c: Citation) => void; student?: boolean; question?: Question
+}) {
   const sources = new Map<string, Citation>()
   const webSources = new Map<string, { source: WebSource; url: URL }>()
   for (const item of answer.items ?? []) {
@@ -315,6 +318,10 @@ function AnswerView({ answer, open, student = false }: { answer: Answer; open?: 
     {answer.items?.map((item, i) => <section className="answer-item" key={i}>
       <div className="answer-title">{!student && <Tag value={item.status}/>}<strong>{item.question}</strong></div>
       <p className="pre-wrap">{student && item.status === "validation_failed" ? "暂时无法确认准确答案。请补充具体事项或适用年度后再试。" : plainAnswer(item.content)}</p>
+      {student && question?.status === 'complete' && <FeedbackControls questionId={question.id} index={i}
+        initial={question.feedback?.find(entry => entry.item_index === i)}/>}
+      {!student && question?.feedback?.filter(entry => entry.item_index === i).map(entry =>
+        <FeedbackRecord entry={entry} key={entry.item_index}/>)}
     </section>)}
     {webCards.length > 0 && <section className="answer-item web-sources" aria-label="联网来源">
       <span className="eyebrow">联网来源</span>
@@ -443,7 +450,7 @@ function Chat({ profile, edit }: { profile: Profile; edit: () => void }) {
     } catch (e) { setQuestions(old => old.filter(x => x.id !== optimisticId)); setError(e) } finally { setBusy(false) }
   }
   async function open(c: Citation) { try { setSource(await api<Citation>('/sources/' + c.chunk_id)) } catch (e) { setError(e) } }
-  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>校园咨询</h1><p className="chat-description">查制度、聊知识，也可以轻松聊聊。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可连续追问办理条件、材料和时间；换个话题也能聊。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><OctopusMascot/><b>小八 · 校园问答</b><span>陪你把事情理清楚</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><OctopusMascot/></span><h2>今天想了解点什么？</h2><p>奖学金、请假、综测，或是学习生活，都可以聊<span className="welcome-emoticon">(｡•̀ᴗ-)✧</span></p>{examples.length > 0 && <div className="suggestions"><span className="suggestion-label">提问示例</span>{examples.map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div>}</div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><ReplyHeader createdAt={q.created_at}/>{q.status === 'pending' ? <ProgressNotice stage={q.progress ?? 'received'}/> : <AnswerView answer={q.answer} open={open} student/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>连续对话（自动判断话题）</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="想了解什么，问问小八…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? null : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <SourceDialog source={source} onClose={() => setSource(null)}/>}</main>
+  return <main id="main-content" className="chat-layout"><aside className="chat-aside"><span className="eyebrow">学生事务服务</span><h1>校园咨询</h1><p className="chat-description">查制度、聊知识，也可以轻松聊聊。</p><IdentityCard profile={profile} edit={edit}/><p className="muted">可连续追问办理条件、材料和时间；换个话题也能聊。</p><div className="boundary" id="service-notes">仅显示当前浏览器会话中的问答。退出后，完整记录仍由后台长期保存，不提供凭手机号找回。</div></aside><section className="conversation"><div className="conversation-top"><OctopusMascot/><b>小八 · 校园问答</b><span>陪你把事情理清楚</span></div><div className="messages" aria-live="polite">{questions.length === 0 && <div className="welcome"><span className="welcome-mark"><OctopusMascot/></span><h2>今天想了解点什么？</h2><p>奖学金、请假、综测，或是学习生活，都可以聊<span className="welcome-emoticon">(｡•̀ᴗ-)✧</span></p>{examples.length > 0 && <div className="suggestions"><span className="suggestion-label">提问示例</span>{examples.map(t => <button key={t} onClick={() => { setDraft(t); setRequestId(newRequestId()) }}>{t}<ArrowUpRight size={14}/></button>)}</div>}</div>}{questions.map(q => <article className="exchange" key={q.id} ref={q.id === latestId ? latestExchangeRef : undefined}><div className="question-bubble">{q.text}</div>{q.alert && <div className="alert-card" role="alert"><Siren size={22}/><div><b>请优先保障人身安全</b><p>{q.alert.message}</p><small>{q.alert.notice}</small></div></div>} {!q.alert && <div className="response-bubble"><ReplyHeader createdAt={q.created_at}/>{q.status === 'pending' ? <ProgressNotice stage={q.progress ?? 'received'}/> : <AnswerView answer={q.answer} open={open} student question={q}/>}</div>}</article>)}</div><div className="composer" ref={composerRef}><ErrorBox error={error}/>{unresolved && !busy && <button className="secondary" onClick={async () => { setBusy(true); try { await poll(unresolved); setError(null) } catch (e) { setError(e) } finally { setBusy(false) } }}>检查回答状态</button>}<form onSubmit={submit}><div id={conditionsId} className={showConditions ? "context-fields chat-conditions is-open" : "context-fields chat-conditions"}><label>业务年度 <input aria-label="业务年度" type="number" min="2000" max="2100" placeholder="默认本年" value={year} onChange={e => setYear(e.target.value)}/></label><label className="checkbox"><input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)}/>连续对话（自动判断话题）</label></div><div className="composer-input-row"><button type="button" className="chat-conditions-toggle" aria-label="提问条件" aria-expanded={showConditions} aria-controls={conditionsId} onClick={() => setShowConditions(open => !open)}>{year ? year + "年" : "条件"}</button><div className="input-shell"><textarea aria-label="你的问题" required maxLength={2000} placeholder="想了解什么，问问小八…" value={draft} onChange={e => { setDraft(e.target.value); setRequestId(newRequestId()) }} rows={3}/><button className="send-button" aria-label="发送问题" disabled={busy || !draft.trim()}><ArrowUp size={20}/></button></div></div><small>{busy ? null : `${draft.length}/2000 · 资料不足的问题将进入后台，不自动通知原提问者。`}</small></form></div></section>{source && <SourceDialog source={source} onClose={() => setSource(null)}/>}</main>
 }
 
 const sections = [
@@ -509,8 +516,22 @@ function AdminSection({ section, navigate }: { section: string; navigate: (s: st
   if (section === 'knowledge') return <Load<{ max_upload_mb: number }> path="/modes">{modes => <KnowledgePage uploadLimitMb={modes.max_upload_mb}/>}</Load>
   if (section === 'events') return <EventsPage/>
   if (section === 'people') return <Load<Profile[]> path="/admin/people">{data => data.length ? <div className="record-grid">{data.map((p, i) => <section className="panel" key={p.id ?? i}><ProfileView person={p}/><small>登记编号 {p.id}</small></section>)}</div> : <Empty/>}</Load>
-  if (section === 'questions') return <Load<Question[]> path="/admin/questions">{data => data.length ? data.map(q => <details className="panel" key={q.id}><summary><b>{q.text}</b><small>{stamp(q.created_at)}</small></summary>{q.snapshot && <ProfileView person={q.snapshot}/>}<AnswerView answer={q.answer}/></details>) : <Empty/>}</Load>
+  if (section === 'questions') return <QuestionRecords/>
   return null
+}
+
+function QuestionRecords() {
+  const [feedbackOnly, setFeedbackOnly] = useState(false)
+  const path = feedbackOnly ? '/admin/questions?feedback_only=true' : '/admin/questions'
+  return <>
+    <div className="filter-bar"><label className="checkbox"><input type="checkbox" checked={feedbackOnly}
+      onChange={event => setFeedbackOnly(event.target.checked)}/>仅显示有反馈的问答</label></div>
+    <Load<Question[]> key={path} path={path}>{data => data.length ? data.map(q => <details className="panel" key={q.id}>
+      <summary><b>{q.text}</b><small>{stamp(q.created_at)}{Boolean(q.feedback?.length) && ` · ${q.feedback?.length} 条回复有反馈`}</small></summary>
+      {q.snapshot && <ProfileView person={q.snapshot}/>}
+      <AnswerView answer={q.answer} question={q}/>
+    </details>) : <Empty text={feedbackOnly ? '还没有收到回复反馈。' : undefined}/>}</Load>
+  </>
 }
 
 function DailyLimitForm({ initialLimit }: { initialLimit: number }) {

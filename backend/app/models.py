@@ -103,6 +103,16 @@ class Question(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class QuestionFeedback(Base):
+    __tablename__ = "question_feedback"
+
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"), primary_key=True)
+    item_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rating: Mapped[str | None] = mapped_column(String(8))
+    comment: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class Issue(Base):
     __tablename__ = "issues"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
