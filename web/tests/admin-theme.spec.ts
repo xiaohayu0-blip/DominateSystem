@@ -40,6 +40,7 @@ for (const width of [1440, 390, 320]) {
     await page.getByLabel('密码', { exact: true }).fill('fixture-password1')
     await page.getByRole('button', { name: '登录工作台' }).click()
     await expect(page.getByRole('heading', { name: '工作事项' })).toBeVisible()
+    await expect(page.getByText(/发送上周新增问题/)).toHaveCount(0)
     await noOverflow()
     await page.screenshot({ path: `test-results/admin-overview-${width}.png`, fullPage: true })
     for (const title of ['后台周报', '紧急事件', '资料维护', '登记资料', '问答记录', '工作概览']) {
@@ -48,6 +49,7 @@ for (const width of [1440, 390, 320]) {
       await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
       await expect(page.locator('.loading')).toHaveCount(0)
       if (title === '后台周报') {
+        await expect(page.getByText(/发送上周新增问题|该周邮件/)).toHaveCount(0)
         await page.getByRole('button', { name: '导出 Excel' }).click()
         await expect(page.getByLabel('开始日期')).toHaveValue('2026-11-16')
         await expect(page.getByLabel('结束日期（含当天）')).toHaveValue('2026-11-22')

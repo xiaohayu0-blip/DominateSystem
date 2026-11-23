@@ -117,7 +117,7 @@ test('手机后台发布正式答复、复测和完成问题闭环', async ({ pa
   await page.getByRole('button', { name: '保存处理', exact: true }).click()
   await expect(page.locator('.issue-card').getByText('已完成', { exact: true })).toBeVisible()
   await navigate(page, '后台周报')
-  await expect(page.getByText('北京时间每周一 09:00 发送上周新增问题。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出 Excel' })).toBeVisible()
   await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: '../docs/evidence/weekly-mobile.png', fullPage: true })
 })

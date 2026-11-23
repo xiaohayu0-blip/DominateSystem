@@ -106,12 +106,11 @@ export async function streamAnswer(id: string, receive: (event: AnswerEvent) => 
   }
 }
 
-type WeeklyMail = { status: string; week_start: string; sent_at: string | null; attempts: number }
-export type Occurrence = { issue_id: string; question_id: string; question: string; subquestion: string; snapshot: Profile; context: { business_year: number; admission_year: number | null }; answer: Answer; created_at: string; weekly_mail: WeeklyMail | null }
+export type Occurrence = { issue_id: string; question_id: string; question: string; subquestion: string; snapshot: Profile; context: { business_year: number; admission_year: number | null }; answer: Answer; created_at: string }
 export type History = { at: string; by?: string; note?: string; state?: string; action?: string; review?: Review }
 export type Issue = { id: string; text: string; reason: string; state: string; owner: string; revision: number; count: number; evidence_ids: string[]; occurrences: Occurrence[]; history: History[]; retests: { at: string; passed: boolean; evidence_ids: string[]; results: { answer: Answer }[] }[] }
 export type Doc = { id: string; title: string; publisher: string; version: string; business_year: number | null; admission_year: number | null; effective_from: string | null; effective_to: string | null; status: string; parse_status: string; parse_note: string; confirmed_by: string; confirmed_on: string | null; basis: string; chunks: { id: string; location: string; text: string }[] }
-export type Weekly = { mail_enabled: boolean; weekly_mail: WeeklyMail | null; start: string; end: string; new: Issue[]; backlog: Issue[]; counts: { new: number; backlog: number; by_reason: Record<string, number> } }
+export type Weekly = { start: string; end: string; new: Issue[]; backlog: Issue[]; counts: { new: number; backlog: number; by_reason: Record<string, number> } }
 export type Review = 'pending' | 'needs_followup' | 'false_alarm' | 'undetermined'
 export type Emergency = { id: string; question_id: string; text: string; state: string; review: Review; snapshot: Profile; history: History[]; created_at: string; mail: { id: string; mode: string; status: string; body: string; legacy_preview?: boolean; attempts: number; error_code: string; attempt_history: { at: string; result: string }[] } }
 export type EventConversation = { complete: boolean; turns: { id: string; text: string; created_at: string; status: string; replies: string[] }[] }
