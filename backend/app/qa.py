@@ -243,7 +243,8 @@ def context_for(data, previous=None):
         admission = int(grade.group(1))
     history = []
     if previous:
-        history = list(previous.context.get("history", []))[-4:]
+        # Keep five earlier exchanges before adding the immediately preceding one.
+        history = list(previous.context.get("history", []))[-10:]
         history += [{"role": "user", "content": scrub(previous.text)},
                     {"role": "assistant", "content": scrub("\n".join(
                         item.get("content", "") for item in previous.answer.get("items", [])))[:2000]}]

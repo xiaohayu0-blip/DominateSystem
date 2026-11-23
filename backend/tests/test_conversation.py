@@ -440,10 +440,13 @@ def test_history_is_bounded_and_scrubbed():
     for i in range(8):
         data = QuestionInput(request_id='conversation-history-01', text=f'讲解机会成本{i}')
         context = context_for(data, previous)
-        previous = SimpleNamespace(text='我的手机13800000001', context=context,
-                                   answer={'items': [{'content': '可以继续讲解 😊'}]})
-    assert len(context['history']) == 6
-    assert '13800000001' not in str(context['history'])
+        previous = SimpleNamespace(text=f'{data.text}，我的手机13800000001', context=context,
+                                   answer={'items': [{'content': f'可以继续讲解{i} 😊'}]})
+    history = context['history']
+    assert len(history) == 12
+    assert [item['role'] for item in history] == ['user', 'assistant'] * 6
+    assert [item['content'] for item in history[1::2]] == [f'可以继续讲解{i} 😊' for i in range(1, 7)]
+    assert '13800000001' not in str(history)
 
 
 def test_partial_single_policy_answer_keeps_citations_and_records_only_gap(monkeypatch):
