@@ -17,8 +17,8 @@ real_plan = chat.plan_turn
 
 
 @pytest.mark.parametrize('related_material', [False, True])
-def test_college_staff_lookup_falls_back_to_official_web_evidence(monkeypatch, related_material):
-    question = '学院的团委老师是谁？'
+@pytest.mark.parametrize('question', ['学院的团委老师是谁？', '团委老师是谁？'])
+def test_college_staff_lookup_falls_back_to_official_web_evidence(monkeypatch, related_material, question):
     if related_material:
         publish('管理学院团委工作办法', '管理学院团委老师负责指导团日活动。')
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
@@ -37,18 +37,33 @@ def test_college_staff_lookup_falls_back_to_official_web_evidence(monkeypatch, r
             return {'tasks': [{'kind': 'general', 'question': question, 'clauses': [0]}]}
         if 'untrusted_evidence' in payload:
             assert related_material
+            assert '武汉纺织大学管理学院' in payload['question']
             return {'needs_search': True}
         assert [source['url'] for source in payload['untrusted_search_snippets']] == [official_url]
         return {'answer': '管理学院团委指导老师是测试老师。', 'source_ids': ['official']}
 
     monkeypatch.setattr(chat, 'search_web', web_search)
     monkeypatch.setattr(DeepSeekModel, 'request_json', model)
+    monkeypatch.setattr(DeepSeekModel, 'request_web', lambda *_: {})
     with SessionLocal() as db:
         item, = chat.answer_turn(db, question, {'business_year': 2026})['items']
     assert len(searches) == 1
-    assert all(term in searches[0] for term in ['武汉纺织大学', '学院', '团委'])
+    assert all(term in searches[0] for term in ['武汉纺织大学管理学院', '团委'])
+    assert item['question'] == question
     assert item['status'] == 'web_answer' and item['knowledge_gap'] is True
     assert item['web_sources'][0]['url'] == official_url
+
+
+def test_college_staff_lookup_uses_native_search_with_official_sources(monkeypatch):
+    official = {'url': 'https://em.wtu.edu.cn/test-directory', 'title': '管理学院团委人员名单'}
+
+    def native(db, question, **kwargs):
+        assert question == '武汉纺织大学管理学院 团委老师是谁？'
+        return {'web_sources': [official, {'url': 'https://example.com/directory', 'title': '外校团委'}]}
+
+    monkeypatch.setattr(chat, 'direct_model_answer', native)
+    with SessionLocal() as db:
+        assert chat.find_web_answer(db, '团委老师是谁？', campus_gap=True)['web_sources'] == [official]
 
 
 @pytest.mark.parametrize('question', [

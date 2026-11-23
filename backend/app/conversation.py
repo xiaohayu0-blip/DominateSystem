@@ -231,6 +231,10 @@ def direct_model_answer(db, question, *, campus_gap=False, brief=False):
                    '核对来源所说的学校、适用年度、对象和例外。其他学校的规则不能当成本校规则。'
                    '只回答用户指定的分支和事项。只查到其他类别或其他事项时直接说明依据不足。'
                    '无法核实本校规定时明确说明，不能把一般经验当成本校规定。')
+        if COLLEGE_STAFF.search(question):
+            prompt += ('校内人员优先搜索该学院官网，核对岗位全称与报道日期。'
+                       '团委书记、团委指导老师和校团委是不同岗位或机构。'
+                       '只有历史报道时，给出报道日期和当时的人员，并说明现任情况待核实。')
     if not model_budget_available(db) or not semaphore.acquire(timeout=1):
         raise ModelFailure('resource_limit')
     try:
@@ -309,9 +313,10 @@ INTRODUCTION = re.compile(
     r"(?:你是(?:谁|什么(?:助手|机器人|AI)?)|你叫什么(?:名字)?|你(?:能|会)做什么|(?:请)?(?:介绍一下你自己|自我介绍一下))"
     r"[呀啊呢吗？?。！!\s]*", re.I)
 CAMPUS_SCOPE = re.compile(r"本校|本院|我校|我院|(?:我们|咱们|你们)(?:学校|学院)|管理学院|学院的|学校的|武汉纺织大学")
+COLLEGE_STAFF = re.compile(r"(?:团委|团总支|教务|学工|学生工作).{0,12}(?:老师|教师|负责人|书记|谁负责)")
 CAMPUS_FACT = re.compile(
     r"规定|制度|流程|审批|截止|评[定审选]|资格|名单|模板|多少|几分|何时|什么时候|安排|怎么申请|"
-    r"(?:团委|团总支|教务|学工|学生工作).{0,12}(?:老师|教师|负责人|书记|谁负责)"
+    + COLLEGE_STAFF.pattern
 )
 SCHOOL_PROFILE = re.compile(r"校史|学校简介|建校|始建|创建|创办|办学历史|成立时间|哪[一年几].{0,8}成立|什么时候成立|校训|更名|校址")
 CAMPUS_RULE = re.compile(
@@ -322,7 +327,32 @@ CAMPUS_RULE = re.compile(
 )
 
 
+def college_staff_query(question):
+    school = settings().school_name
+    college = f'{school}管理学院'
+    if college in question or re.search(r'校团委|学校的', question):
+        return question
+    scope = re.sub(r'请问|请教|想问|帮我查|(?:我们|咱们|你们|本|我|这个|该)(?:学校|学院)', '', question)
+    if re.search(r'[\u4e00-\u9fff]{2,}大学', scope) and school not in scope:
+        return question
+    if '管理学院' in question:
+        return question.replace('管理学院', college, 1)
+    if re.search(r'[\u4e00-\u9fff]{2,}学院', scope):
+        return question
+    return f'{college} {question}'
+
+
 def find_web_answer(db, question, *, campus_gap=False, search_query=None, brief=False):
+    if campus_gap and COLLEGE_STAFF.search(question):
+        question = college_staff_query(question)
+        try:
+            result = direct_model_answer(db, question, campus_gap=True, brief=brief)
+            sources = campus_web_sources(result.get('web_sources', []), question)
+            if sources:
+                return {**result, 'web_sources': sources}
+        except (ModelFailure, MissingEvidence, InvalidEvidence):
+            pass
+        return web_answer(db, question, search_query=question, campus_gap=True, brief=brief)
     if campus_gap and not SCHOOL_PROFILE.search(question):
         return web_answer(db, question, search_query=search_query, campus_gap=True, brief=brief)
     try:
@@ -449,7 +479,8 @@ def prepare_turn(db, text, context):
         original = (''.join(question_clauses(text)[i] for i in task['clauses']) if task.get('clauses')
                     else text if len(tasks) == 1 else question)
         school_name = settings().school_name
-        if any(CAMPUS_RULE.search(value) or (CAMPUS_SCOPE.search(value) or school_name and school_name in value)
+        if any(COLLEGE_STAFF.search(value) or CAMPUS_RULE.search(value)
+               or (CAMPUS_SCOPE.search(value) or school_name and school_name in value)
                and (CAMPUS_FACT.search(value) or SCHOOL_PROFILE.search(value)) for value in (original, question)):
             kind = 'campus'
         action = task.get('branch_action', 'none')
@@ -507,12 +538,15 @@ def prepare_turn(db, text, context):
                     items.append(answer_award_amounts(db, text, scope, awards))
                     continue
             options = task.get('clarify_options', []) if not aggregate and not selected else []
-            answer = policy_answer(db, question, {**scope,
+            policy_question = college_staff_query(question) if COLLEGE_STAFF.search(question) else question
+            answer = policy_answer(db, policy_question, {**scope,
                 '_planned_task': bool(task.get('clauses') or branches or aggregate or options),
                 '_branch_options': branches if aggregate else [], '_branch_question': branch_question,
                 '_clarification_options': options if len(options) >= 2 else []})
             task_items = []
             for item in answer['items']:
+                if item['question'] == policy_question and policy_question != question:
+                    item = {**item, 'question': question, 'search_question': policy_question}
                 if item['status'] == 'missing_material':
                     task_items.append(fill_material_gap(db, {**item, 'status': 'missing_material'}))
                 else:
