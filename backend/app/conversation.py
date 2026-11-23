@@ -179,7 +179,7 @@ STYLE = ('你是校园小助手小八，用自然、轻松、简洁的中文直�
 WEB_GAP_UNVERIFIED = '知识库暂时没有相关资料。联网搜索也暂未找到能核实这件事的公开资料。'
 
 
-def deepseek_sources(message):
+def deepseek_sources(message, *, limit=5):
     pages = {}
     for step in message.get('server_tool_calls') or []:
         for call in step.get('calls') or []:
@@ -210,12 +210,13 @@ def deepseek_sources(message):
             and re.match(r'^\d{4}-\d{2}-\d{2}(?:T|$)', timestamp) else None,
             'retrieved_at': today(),
         }
-        if len(sources) == 5:
+        if limit is not None and len(sources) >= limit:
             break
     return list(sources.values())
 
 
 def direct_model_answer(db, question, *, campus_gap=False, brief=False):
+    all_colleges = campus_gap and COLLEGE_STAFF.search(question) and ALL_COLLEGES.search(question)
     prompt = STYLE + (
         '必须先使用内置搜索，再依据搜索工具实际返回的来源回答当前问题。'
         '不编造链接、学校制度、截止日期、资格或实时信息；无法确认时直接说明。'
@@ -232,16 +233,20 @@ def direct_model_answer(db, question, *, campus_gap=False, brief=False):
                    '只回答用户指定的分支和事项。只查到其他类别或其他事项时直接说明依据不足。'
                    '无法核实本校规定时明确说明，不能把一般经验当成本校规定。')
         if COLLEGE_STAFF.search(question):
-            prompt += ('校内人员优先搜索该学院官网，核对岗位全称与报道日期。'
+            prompt += ('校内人员优先查学校和相关学院官网，核对岗位全称与报道日期。'
                        '团委书记、团委指导老师和校团委是不同岗位或机构。'
                        '只有历史报道时，给出报道日期和当时的人员，并说明现任情况待核实。')
+        if all_colleges:
+            prompt += ALL_COLLEGES_SEARCH_GUIDANCE
+            if settings().school_name == '武汉纺织大学':
+                prompt += '武汉纺织大学官网二级院部目录：https://www.wtu.edu.cn/zzjg/ejyb.htm。'
     if not model_budget_available(db) or not semaphore.acquire(timeout=1):
         raise ModelFailure('resource_limit')
     try:
         message = DeepSeekModel().request_web(prompt, scrub(question))
     finally:
         semaphore.release()
-    sources = [source for source in deepseek_sources(message) if source['excerpt']]
+    sources = [source for source in deepseek_sources(message, limit=None if all_colleges else 5) if source['excerpt']]
     content = model_text(message.get('content'))
     return {'question': question, 'status': 'web_answer', 'content': content,
             'citations': [], 'web_sources': sources}
@@ -282,6 +287,8 @@ def web_answer(db, question, *, search_query=None, campus_gap=False, brief=False
         raise MissingEvidence()
     scope = ("这是本校制度问题。用同一学校、对象、业务年度和地区的条款。"
              "上级文件只支持其明示适用的通用规则；本校流程需要本校依据。" if campus_gap else "")
+    if campus_gap and COLLEGE_STAFF.search(question) and ALL_COLLEGES.search(question):
+        scope += ALL_COLLEGES_SEARCH_GUIDANCE
     if brief:
         scope += "只写本小类的直接结论和必要条件。"
     result = model_json(db, STYLE + (
@@ -314,6 +321,12 @@ INTRODUCTION = re.compile(
     r"[呀啊呢吗？?。！!\s]*", re.I)
 CAMPUS_SCOPE = re.compile(r"本校|本院|我校|我院|(?:我们|咱们|你们)(?:学校|学院)|管理学院|学院的|学校的|武汉纺织大学")
 COLLEGE_STAFF = re.compile(r"(?:团委|团总支|教务|学工|学生工作).{0,12}(?:老师|教师|负责人|书记|谁负责)")
+ALL_COLLEGES = re.compile(r"(?:全校|各(?:个|二级)?|所有(?:的)?|全部(?:的)?|每(?:个|一所)|二级)学院")
+ALL_COLLEGES_SEARCH_GUIDANCE = (
+    '用户要全校各学院。以学校官网的二级院部目录为范围，优先搜索学校公开的完整名单，再按学院查证。'
+    '按学院逐行给出能核实的姓名和岗位，历史人选注明日期。对仍缺依据的学院单独列名并标记未核实。'
+    '校级岗位不能代替学院岗位，少数学院的名单不能写成全校完整名单。'
+)
 CAMPUS_FACT = re.compile(
     r"规定|制度|流程|审批|截止|评[定审选]|资格|名单|模板|多少|几分|何时|什么时候|安排|怎么申请|"
     + COLLEGE_STAFF.pattern
@@ -330,16 +343,20 @@ CAMPUS_RULE = re.compile(
 def college_staff_query(question):
     school = settings().school_name
     college = f'{school}管理学院'
-    if college in question or re.search(r'校团委|学校的', question):
-        return question
-    scope = re.sub(r'请问|请教|想问|帮我查|(?:我们|咱们|你们|本|我|这个|该)(?:学校|学院)', '', question)
+    scope = re.sub(r'请问(?:一下)?|请教(?:一下)?|想问(?:一下)?|帮我查(?:一下)?', '', question)
     if re.search(r'[\u4e00-\u9fff]{2,}大学', scope) and school not in scope:
         return question
-    if '管理学院' in question:
-        return question.replace('管理学院', college, 1)
-    if re.search(r'[\u4e00-\u9fff]{2,}学院', scope):
-        return question
-    return f'{college} {question}'
+    if ALL_COLLEGES.search(scope) or re.search(r'校团委|学校的|学校团委', scope):
+        return question if school in question else school + question
+    if '学院' in scope:
+        named_scope = re.sub(r'(?:我们|咱们|你们|本|我|这个|该)学院', '', scope.replace(school, ''))
+        if re.search(r'[\u4e00-\u9fff]{2,}学院', named_scope):
+            return question if school in question else school + question
+        default_college = '管理学院' if school in question else college
+        return re.sub(r'(?:我们|咱们|你们|本|我|这个|该)?学院', default_college, question, count=1)
+    if school in question:
+        return question.replace(school, f'{school}各学院', 1)
+    return f'{school}各学院 {question}'
 
 
 def find_web_answer(db, question, *, campus_gap=False, search_query=None, brief=False):
