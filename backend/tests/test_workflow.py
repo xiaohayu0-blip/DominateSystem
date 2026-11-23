@@ -152,7 +152,7 @@ def test_clarification_resolves_only_own_previous(client):
     with SessionLocal() as db:
         source(db)
         db.commit()
-    prior = ask(client, "专业排名第一德育加多少分")
+    prior = ask(client, "国家奖学金评审中，专业排名第一德育加多少分")
     assert prior["answer"]["items"][0]["status"] == "needs_clarification"
     answer = ask(client, "智育", previous_id=prior["id"])
     assert answer["answer"]["items"][0]["status"] == "answered"

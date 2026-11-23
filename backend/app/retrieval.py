@@ -280,8 +280,10 @@ class HybridRetriever:
         awards = re.findall(r"(?:国家|省|校|院)级[一二三]等奖", text)
         points = bool(re.search(r"加[几多少]*分|加多少|综测.{0,8}分|综合.{0,8}测评.{0,8}分", text))
         numeric_points = points and bool(re.search(r"(?:几|多少)分", text))
+        unscoped_ranking = points and context.get("_national_ranking") is False and re.search(r"排名|专业.{0,8}第", text)
         credits = "学分" in text and not points
-        topics = re.findall(r"奖学金|请假|转专业|补贴|补助|费用|保研|考试|寝室|处分", text)
+        topics = set(re.findall(r"奖学金|请假|转专业|补贴|补助|费用|保研|考试|寝室|处分", text))
+        financial_topic = bool(topics & {"补贴", "补助", "费用"})
         award_topics = [topic for topic in AWARD_TOPICS if topic in text]
         class_codes = set(re.findall(r"(?<![a-z0-9])[a-z]{2,6}\d{4,8}(?![a-z0-9])", text.lower()))
         calendar_query = bool(re.search(r"校历|寒假|暑假|元旦|开学|军训|教学周|放假|新生报到", text))
@@ -297,7 +299,8 @@ class HybridRetriever:
         scored, cohort_options = [], {}
         roster_matches, inferred_roster_matches = [], []
         roster_role = "辅导员" if "辅导员" in text and "班主任" not in text else "班主任"
-        roster_query = any(role in text for role in ("班主任", "辅导员", "职称")) or bool(class_codes)
+        roster_query = context.get("_lookup") in (None, "roster") and (
+            any(role in text for role in ("班主任", "辅导员", "职称")) or bool(class_codes))
         roster_headers = roster_columns(rows) if roster_query else {}
         if scoped := scoped_roster_matches(rows, roster_headers, text):
             return scoped
@@ -307,7 +310,7 @@ class HybridRetriever:
                 continue
             if credits and "学分" not in chunk.text:
                 continue
-            if numeric_points and not re.search(r"\d+(?:\.\d+)?\s*(?:分|\|)", chunk.text):
+            if unscoped_ranking and "国家奖学金" in doc.title and "打分表" in doc.title:
                 continue
             if any(award not in chunk.text for award in awards):
                 continue
@@ -331,7 +334,7 @@ class HybridRetriever:
                     continue
             combined = normalize_terms(doc.title + " " + chunk.text)
             doc_terms = terms(combined)
-            if any(topic not in combined for topic in topics):
+            if financial_topic and not re.search(r"补贴|补助|费用|津贴|资助|报销", combined):
                 continue
             campus_policy = ("校级奖学金" in award_topics and "本科生奖学金评定管理办法" in doc.title)
             if award_topics and not campus_policy and not any(topic in combined for topic in award_topics):
@@ -354,6 +357,10 @@ class HybridRetriever:
                 continue
             bge_weight = 0.6 if use_bge else 0.2
             score = lexical * (1 - bge_weight) + max(semantic, 0) * bge_weight
+            if topics:
+                score += 0.10 * sum(topic in combined for topic in topics) / len(topics)
+            if numeric_points and re.search(r"\d+(?:\.\d+)?\s*(?:分|\|)", chunk.text):
+                score += 0.10
             # Scope affects ordering and explanation, never whether a published source is readable.
             score += 0.15 if doc.business_year == year else 0.05 if doc.business_year is None else 0
             if admission and (doc.admission_year == admission or admission in cohorts):

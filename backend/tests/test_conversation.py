@@ -11,9 +11,73 @@ from app.qa import DeepSeekModel, ModelFailure, context_for
 from app.schemas import QuestionInput
 from conftest import signup, student
 from test_knowledge import ask, publish
+from test_policy_evidence_selection import publish as publish_structured
 
 real_search = chat.search_web
 real_plan = chat.plan_turn
+
+
+@pytest.mark.parametrize('question,title,rule', [
+    ('辅导员转发的讲座主讲人是谁？', '就业讲座通知', '就业讲座主讲人是李老师。'),
+    ('我在教务系统怎么查任课老师？', '教务系统使用说明', '在教务系统课表页面查看任课老师。'),
+    ('我期末考试专业排第3名，综测能加多少分？', '综合测评办法', '综测学业成绩按课程成绩计算。'),
+    ('请假和补考有关系吗？', '学生考勤规定', '因故缺考的学生可申请缓考。'),
+])
+def test_complete_question_controls_campus_lookup(monkeypatch, question, title, rule):
+    publish(title, rule)
+    publish('国家奖学金评审打分表', '综测排名（30分）：专业排名第一加30分，第二名25分，按名次依次递减5分。')
+    with SessionLocal() as db:
+        publish_structured(db, '班主任名单.xlsx', [
+            ('工作表 名单 第1行', '| 班级 | 班主任 | 辅导员 |'),
+            ('工作表 名单 第2行', '| 会计12601 | 张老师 | 王老师 |'),
+        ])
+        db.commit()
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', real_plan)
+    calls = []
+
+    def model(self, system, payload):
+        calls.append(payload)
+        if 'current_question' in payload:
+            return {'tasks': [{'kind': 'campus', 'lookup': 'other', 'question': question,
+                               'clauses': list(range(len(payload['clauses'])))}]}
+        assert payload['question'] == question
+        source = next(source for source in payload['untrusted_evidence'] if rule == source['excerpt'])
+        assert all('打分表' not in row['title'] for row in payload['untrusted_evidence'])
+        return {'answer': rule, 'selections': [{'chunk_id': source['chunk_id']}]}
+
+    monkeypatch.setattr(DeepSeekModel, 'request_json', model)
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, question, {'business_year': 2026})['items']
+    assert item['content'] == rule
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('question,lookup,expected', [
+    ('会计12601班的辅导员是谁？', 'roster', '王老师'),
+    ('国家奖学金评审中，专业排名第3名，综测计多少分？', 'national_award_ranking', '20分'),
+])
+def test_requested_lookup_still_uses_specialized_table(monkeypatch, question, lookup, expected):
+    from test_ranking import source
+
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', real_plan)
+
+    def model(self, system, payload):
+        assert 'current_question' in payload
+        return {'tasks': [{'kind': 'campus', 'lookup': lookup, 'question': question,
+                           'clauses': list(range(len(payload['clauses'])))}]}
+
+    monkeypatch.setattr(DeepSeekModel, 'request_json', model)
+    with SessionLocal() as db:
+        source(db)
+        publish_structured(db, '班主任名单.xlsx', [
+            ('工作表 名单 第1行', '| 班级 | 班主任 | 辅导员 |'),
+            ('工作表 名单 第2行', '| 会计12601 | 张老师 | 王老师 |'),
+        ])
+        item, = chat.answer_turn(db, question, {'business_year': 2026})['items']
+    assert item['status'] == 'answered' and expected in item['content']
+    assert item['citations']
 
 
 @pytest.mark.parametrize('related_material', [False, True])
@@ -37,7 +101,7 @@ def test_college_staff_lookup_falls_back_to_official_web_evidence(monkeypatch, r
 
     def model(self, system, payload):
         if 'current_question' in payload:
-            return {'tasks': [{'kind': 'general', 'question': question, 'clauses': [0]}]}
+            return {'tasks': [{'kind': 'general', 'lookup': 'department_staff', 'question': question, 'clauses': [0]}]}
         if 'untrusted_evidence' in payload:
             assert related_material
             assert scope in payload['question']

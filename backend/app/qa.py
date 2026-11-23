@@ -902,12 +902,21 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
     results = []
     model = ExtractiveMock() if settings().model_mode == "mock" else DeepSeekModel()
     clarification_options = context.get("_clarification_options", [])
+    lookup = context.get("_lookup")
+    last_user = next((turn["content"] for turn in reversed(context.get("history", [])) if turn["role"] == "user"), "")
     full_query = policy_query(retrieval_query(text, context))
     single_item = (context.get("_planned_task") or clarification_for(full_query)
-                   or roster_lookup_question(full_query) or scholarship_request(full_query))
+                   or roster_lookup_question(full_query, lookup) or scholarship_request(full_query))
     parts = [text] if single_item else planned_questions(db, text, model)
     for part in parts:
         query = policy_query(normalize_roster_query(retrieval_query(part, context)))
+        award_scope = policy_query(retrieval_query(context.get("_original_task") or part, context))
+        national_award = r"国家(?:级)?奖学金"
+        national_ranking = bool(
+            lookup in (None, "national_award_ranking") and re.search(national_award, award_scope)
+            or lookup == "national_award_ranking" and re.search(national_award, policy_query(last_user))
+            and re.search(national_award, query)
+        )
         if TECHNICAL_LIMIT_QUESTION.search(query):
             results.append({"question": part, "status": "out_of_scope",
                             "content": "这类问题不能回答", "citations": []})
@@ -919,7 +928,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
                 rule := scholarship_lookup(db, request, context)):
             results.append({"question": part, **rule, "_compose": True})
             continue
-        ranking = ranking_answer(db, query, context)
+        ranking = ranking_answer(db, query, context) if national_ranking else None
         if ranking:
             report_progress("checking")
             report_progress("composing")
@@ -967,7 +976,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
         elif calendar or assessment_citations:
             citations = [calendar] if calendar else assessment_citations
         else:
-            evidence, special = search_policy_evidence(db, query, context)
+            evidence, special = search_policy_evidence(db, query, {**context, "_national_ranking": national_ranking})
             branches = context.get("_branch_options", [])
             if len(branches) > 1:
                 by_id = {}
@@ -1097,7 +1106,7 @@ def answer_question(db, text: str, context: dict, *, allow_history=True) -> dict
             if historical:
                 reason = "historical_reference"
         content = MESSAGES.get(reason, content) if reason else content
-        if reason == "needs_clarification" and roster_lookup_question(query):
+        if reason == "needs_clarification" and roster_lookup_question(query, lookup):
             content = "请补充专业全称和完整班号，以便核对对应老师。"
         displayed_citations = citations if reason in {"", "document_conflict", "historical_reference"} else []
         if allow_history and reason == "missing_material" and not DATED_BATCH_DEADLINE.search(part):

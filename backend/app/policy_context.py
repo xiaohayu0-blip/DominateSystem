@@ -24,10 +24,19 @@ CLASS_TEACHER = re.compile(
     rf"(?:班级|(?:我(?:们)?|本|这个|那个)班|{CLASS_NUMBER.pattern}|\d{{5,8}}班?)"
     r"(?:的)?(?:哪位|哪个|哪一个)?老师|(?:忘(?:了|记了?)|不记得|不知道)班号"
 )
+ROSTER_ROLE = r"(?:班主任|辅导员|(?<!教)导员)"
+ROSTER_TARGET = re.compile(
+    rf"{ROSTER_ROLE}(?:的)?(?:是谁|是哪|叫什么|姓名|名字|职称|没写|没填|没有填|未填|未登记|空白)|"
+    rf"(?:谁是|哪位是|哪个是|谁当|哪位|哪个|哪些|查(?:一下)?|找){ROSTER_ROLE}|"
+    rf"{ROSTER_ROLE}[？?。！!\s]*$"
+)
+EXAM_ABSENCE = re.compile(r"补考|缓考|缺考|延期考试")
 
 
-def roster_lookup_question(query):
-    class_role = re.search(r"班主任|辅导员|(?<!教)导员", query)
+def roster_lookup_question(query, lookup=None):
+    if lookup not in (None, "roster"):
+        return False
+    class_role = re.search(ROSTER_ROLE, query) if lookup == "roster" else ROSTER_TARGET.search(query)
     return ((class_role or "老师" in query and CLASS_TEACHER.search(query))
             and re.search(r"谁|哪位|哪个|名字|班号|查|职称", query)
             and not re.search(r"职责|负责什么|做什么|哪类|管理办法", query))
@@ -137,6 +146,12 @@ def search_policy_evidence(db, query, context):
             evidence, special = retriever.search(db, fallback[0], context)
     if not special:
         evidence = competition_level_evidence(db, query, context, evidence)
+        if "请假" in query and EXAM_ABSENCE.search(query):
+            exam_hits, _ = retriever.search(db, "缺考 缓考 补考", {**context, "_candidate_limit": 4})
+            leave_hits = []
+            if not any("请假" in chunk.text for chunk, _ in evidence):
+                leave_hits, _ = retriever.search(db, "学生请假 因病 因事", {**context, "_candidate_limit": 3})
+            evidence = list({chunk.id: (chunk, doc) for chunk, doc in evidence + exam_hits + leave_hits}.values())
     if ATTENDANCE_ACTION.search(query) and special not in {"roster_match", "needs_clarification"}:
         # Activity instructions may name the person in charge without repeating the requested action.
         activity_hits = []
@@ -149,7 +164,7 @@ def search_policy_evidence(db, query, context):
             by_id = {chunk.id: (chunk, doc) for chunk, doc in activity_hits + evidence}
             evidence = list(by_id.values())
 
-    if roster_lookup_question(query) and special not in {"roster_match", "roster_no_blank_title"}:
+    if roster_lookup_question(query, context.get("_lookup")) and special not in {"roster_match", "roster_no_blank_title"}:
         roster = db.scalar(select(Chunk.id).join(Document).where(
             Document.status == "published", Document.parse_status == "ready",
             Chunk.location.startswith("工作表"), Chunk.text.contains("班级"),

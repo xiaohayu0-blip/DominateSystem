@@ -72,10 +72,15 @@ def plan_turn(db, text, context):
         '最新信息、新闻、天气、价格等归web。包含事实查证的请求按事实类别处理。'
         '学校具体事实必须归campus，不能归general或用外校规定替代。'
         '每个question是当前诉求的自足问句，禁止擅自增添事实。'
+        'lookup按用户真正要查的对象标注：roster是查某班或年级的班主任、辅导员身份或职称，'
+        'department_staff是查学校或学院部门的人员，national_award_ranking是明确问国家奖学金评审的排名计分，其余填other。'
+        '“辅导员转发的讲座主讲人是谁”查的是主讲人，“教务系统怎么查任课老师”问的是系统操作，两者都填other。'
+        '只有本轮或适用的前文明示国家奖学金时才可标注national_award_ranking。'
         'search_query提取精简搜索关键词，去掉请问、联网、查一下等措辞，保留关键实体及所问事项。'
         '每个任务clauses列出所覆盖原句的0起始编号，每个编号必须且仅出现一次，组内升序，按首次出现顺序排列。'
         '输出JSON：{"tasks":[{"question":"完整问题","kind":"campus|chat|general|web",'
-        '"search_query":"搜索关键词","clauses":[0,1],"clarify_options":[],'
+        '"search_query":"搜索关键词","lookup":"roster|department_staff|national_award_ranking|other",'
+        '"clauses":[0,1],"clarify_options":[],'
         '"branch_action":"none|all|all_previous|select_previous","branches":[]}]}。'
     ), {'current_question': scrub(text), 'recent_conversation': context.get('history', []),
         'clauses': [{'index': i, 'text': scrub(clause)} for i, clause in enumerate(clauses)],
@@ -90,6 +95,8 @@ def plan_turn(db, text, context):
             raise InvalidEvidence('invalid_conversation_task')
         if 'search_query' in task and (not isinstance(task['search_query'], str) or len(task['search_query']) > 500):
             raise InvalidEvidence('invalid_search_query')
+        if 'lookup' in task and task['lookup'] not in ('roster', 'department_staff', 'national_award_ranking', 'other'):
+            raise InvalidEvidence('invalid_lookup')
         if task.get('branch_action', 'none') not in ('none', 'all', 'all_previous', 'select_previous'):
             raise InvalidEvidence('invalid_branch_action')
         for field in ('clarify_options', 'branches'):
@@ -320,7 +327,11 @@ INTRODUCTION = re.compile(
     r"(?:你是(?:谁|什么(?:助手|机器人|AI)?)|你叫什么(?:名字)?|你(?:能|会)做什么|(?:请)?(?:介绍一下你自己|自我介绍一下))"
     r"[呀啊呢吗？?。！!\s]*", re.I)
 CAMPUS_SCOPE = re.compile(r"本校|本院|我校|我院|(?:我们|咱们|你们)(?:学校|学院)|管理学院|学院的|学校的|武汉纺织大学")
-COLLEGE_STAFF = re.compile(r"(?:团委|团总支|教务|学工|学生工作).{0,12}(?:老师|教师|负责人|书记|谁负责)")
+COLLEGE_STAFF = re.compile(
+    r"(?:团委|团总支|教务|学工|学生工作)(?:的|部门|处|办|办公室|指导|负责)?"
+    r"(?:哪(?:一)?位|哪个)?(?:老师|教师|负责人|书记|谁负责)"
+    r"(?=是|叫|姓名|名字|联系|[？?。！!\s]|$)"
+)
 ALL_COLLEGES = re.compile(r"(?:全校|各(?:个|二级)?|所有(?:的)?|全部(?:的)?|每(?:个|一所)|二级)学院")
 ALL_COLLEGES_SEARCH_GUIDANCE = (
     '用户要全校各学院。以学校官网的二级院部目录为范围，优先搜索学校公开的完整名单，再按学院查证。'
@@ -359,8 +370,8 @@ def college_staff_query(question):
     return f'{school}各学院 {question}'
 
 
-def find_web_answer(db, question, *, campus_gap=False, search_query=None, brief=False):
-    if campus_gap and COLLEGE_STAFF.search(question):
+def find_web_answer(db, question, *, campus_gap=False, search_query=None, brief=False, staff_lookup=None):
+    if campus_gap and (staff_lookup if staff_lookup is not None else COLLEGE_STAFF.search(question)):
         question = college_staff_query(question)
         try:
             result = direct_model_answer(db, question, campus_gap=True, brief=brief)
@@ -383,7 +394,9 @@ def find_web_answer(db, question, *, campus_gap=False, search_query=None, brief=
 
 def fill_material_gap(db, item, *, brief=False):
     try:
+        staff_lookup = item.get('_staff_lookup')
         result = find_web_answer(db, item.get('search_question', item['question']), campus_gap=True,
+                                 **({'staff_lookup': staff_lookup} if staff_lookup is not None else {}),
                                  **({'brief': True} if brief else {}))
     except (ModelFailure, MissingEvidence, InvalidEvidence, TypeError, AttributeError):
         if brief:
@@ -496,7 +509,10 @@ def prepare_turn(db, text, context):
         original = (''.join(question_clauses(text)[i] for i in task['clauses']) if task.get('clauses')
                     else text if len(tasks) == 1 else question)
         school_name = settings().school_name
-        if any(COLLEGE_STAFF.search(value) or CAMPUS_RULE.search(value)
+        lookup = task.get('lookup')
+        staff_lookup = lookup == 'department_staff' or (
+            lookup is None and any(COLLEGE_STAFF.search(value) for value in (original, question)))
+        if staff_lookup or lookup in ('roster', 'national_award_ranking') or any(CAMPUS_RULE.search(value)
                or (CAMPUS_SCOPE.search(value) or school_name and school_name in value)
                and (CAMPUS_FACT.search(value) or SCHOOL_PROFILE.search(value)) for value in (original, question)):
             kind = 'campus'
@@ -555,8 +571,9 @@ def prepare_turn(db, text, context):
                     items.append(answer_award_amounts(db, text, scope, awards))
                     continue
             options = task.get('clarify_options', []) if not aggregate and not selected else []
-            policy_question = college_staff_query(question) if COLLEGE_STAFF.search(question) else question
+            policy_question = college_staff_query(question) if staff_lookup else question
             answer = policy_answer(db, policy_question, {**scope,
+                '_lookup': lookup, '_original_task': original,
                 '_planned_task': bool(task.get('clauses') or branches or aggregate or options),
                 '_branch_options': branches if aggregate else [], '_branch_question': branch_question,
                 '_clarification_options': options if len(options) >= 2 else []})
@@ -565,7 +582,11 @@ def prepare_turn(db, text, context):
                 if item['question'] == policy_question and policy_question != question:
                     item = {**item, 'question': question, 'search_question': policy_question}
                 if item['status'] == 'missing_material':
-                    task_items.append(fill_material_gap(db, {**item, 'status': 'missing_material'}))
+                    if staff_lookup or lookup is not None and COLLEGE_STAFF.search(item.get('search_question', item['question'])):
+                        item = {**item, '_staff_lookup': staff_lookup}
+                    filled = fill_material_gap(db, item)
+                    filled.pop('_staff_lookup', None)
+                    task_items.append(filled)
                 else:
                     task_items.append(item)
                     for missing in item.get('missing_questions', []):
