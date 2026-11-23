@@ -144,6 +144,33 @@ def test_incomplete_roster_lookup_requests_identity_instead_of_claiming_no_mater
         assert "班号" in result["content"]
 
 
+@pytest.mark.parametrize("query,office", [
+    ("学院的团委老师是谁？", "团委"),
+    ("管理学院分团委哪位老师负责？", "团委"),
+    ("我们班想联系学院团委，负责的老师是哪位？", "团委"),
+    ("学院的教务老师是谁？", "教务"),
+])
+def test_college_office_lookup_keeps_office_evidence_when_class_roster_exists(query, office):
+    with SessionLocal() as db:
+        publish_parts(db, "管理学院班主任信息.xlsx", [
+            ("工作表 名单 第1行", "| 班级 | 班主任 |"),
+            ("工作表 名单 第2行", "| 会计12601 | 测试班主任 |"),
+        ], original_name="班主任信息.xlsx")
+        doc = publish_parts(db, f"管理学院{office}人员名单", [
+            ("第1段", f"管理学院{office}负责老师是测试老师。"),
+        ])
+        item = answer_question(db, query, CONTEXT)["items"][0]
+        assert item["status"] == "answered"
+        assert any(source["document_id"] == doc.id for source in item["citations"])
+
+
+def test_college_office_lookup_without_material_does_not_request_class_number():
+    with SessionLocal() as db:
+        item = answer_question(db, "学院的团委老师是谁？", CONTEXT)["items"][0]
+        assert item["status"] == "missing_material"
+        assert not item["citations"]
+
+
 @pytest.mark.parametrize("query", ["那个还差两天我能不能补一下啊", "我能评上吗，帮看看呗"])
 def test_unresolved_policy_question_asks_for_the_missing_subject(query):
     with SessionLocal() as db:

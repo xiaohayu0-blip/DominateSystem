@@ -16,6 +16,41 @@ real_search = chat.search_web
 real_plan = chat.plan_turn
 
 
+@pytest.mark.parametrize('related_material', [False, True])
+def test_college_staff_lookup_falls_back_to_official_web_evidence(monkeypatch, related_material):
+    question = '学院的团委老师是谁？'
+    if related_material:
+        publish('管理学院团委工作办法', '管理学院团委老师负责指导团日活动。')
+    monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
+    monkeypatch.setattr(chat, 'plan_turn', real_plan)
+    official_url = 'https://em.wtu.edu.cn/test-directory'
+    searches = []
+
+    def web_search(query):
+        searches.append(query)
+        return [{'id': 'official', 'title': '管理学院团委联系人', 'url': official_url,
+                 'excerpt': '管理学院团委指导老师是测试老师。', 'published_at': None,
+                 'retrieved_at': chat.today()}]
+
+    def model(self, system, payload):
+        if 'current_question' in payload:
+            return {'tasks': [{'kind': 'general', 'question': question, 'clauses': [0]}]}
+        if 'untrusted_evidence' in payload:
+            assert related_material
+            return {'needs_search': True}
+        assert [source['url'] for source in payload['untrusted_search_snippets']] == [official_url]
+        return {'answer': '管理学院团委指导老师是测试老师。', 'source_ids': ['official']}
+
+    monkeypatch.setattr(chat, 'search_web', web_search)
+    monkeypatch.setattr(DeepSeekModel, 'request_json', model)
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, question, {'business_year': 2026})['items']
+    assert len(searches) == 1
+    assert all(term in searches[0] for term in ['武汉纺织大学', '学院', '团委'])
+    assert item['status'] == 'web_answer' and item['knowledge_gap'] is True
+    assert item['web_sources'][0]['url'] == official_url
+
+
 @pytest.mark.parametrize('question', [
     '周日晚上我回不来学校，晚点名去不了，我找谁请假',
     '周日晚点名赶不上，要找班主任还是辅导员？',

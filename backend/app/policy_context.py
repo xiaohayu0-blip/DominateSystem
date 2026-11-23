@@ -5,7 +5,7 @@ from sqlalchemy import or_, select
 
 from .competition import competition_level_evidence
 from .models import Chunk, Document
-from .retrieval import retriever
+from .retrieval import CLASS_NUMBER, retriever
 
 COMPATIBLE_ALIASES = {
     r"国励(?:奖学金|奖)?": "国家励志奖学金",
@@ -20,10 +20,15 @@ SAFETY_ANCHORS = re.compile(r"刷单|出租.{0,4}账号|出借银行卡|银行�
 ACTIVITY_ANCHORS = re.compile(r"晚点名|班会|早操|军训|体测|实习|迎新|缓考")
 ATTENDANCE_ACTION = re.compile(r"请假|报备|缺席|参加不了|赶不上|去不了")
 LEAVE_DETAIL = re.compile(r"审批|批准|签字|谁签|找谁|销假|续假")
+CLASS_TEACHER = re.compile(
+    rf"(?:班级|(?:我(?:们)?|本|这个|那个)班|{CLASS_NUMBER.pattern}|\d{{5,8}}班?)"
+    r"(?:的)?(?:哪位|哪个|哪一个)?老师|(?:忘(?:了|记了?)|不记得|不知道)班号"
+)
 
 
 def roster_lookup_question(query):
-    return (re.search(r"班主任|辅导员|导员|老师", query)
+    class_role = re.search(r"班主任|辅导员|(?<!教)导员", query)
+    return ((class_role or "老师" in query and CLASS_TEACHER.search(query))
             and re.search(r"谁|哪位|哪个|名字|班号|查|职称", query)
             and not re.search(r"职责|负责什么|做什么|哪类|管理办法", query))
 
