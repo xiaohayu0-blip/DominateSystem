@@ -6,6 +6,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import date
+from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -20,6 +21,7 @@ from .calendar_index import CALENDAR_NOTE, verified_calendar_parts
 from .config import settings
 from .conversation import QUESTION_EXAMPLES, example_answer
 from .db import SessionLocal, get_db, now
+from .issue_export import issue_export
 from .qa import context_for, daily_model_limit
 from .progress import log_question_event, question_progress
 from .question_queue import QuestionWorker
@@ -468,6 +470,14 @@ def report(day: date | None = None, actor=Depends(admin), db: DBSession = Depend
     from zoneinfo import ZoneInfo
     from datetime import datetime
     return weekly(db, day or datetime.now(ZoneInfo("Asia/Shanghai")).date())
+
+
+@app.get("/api/admin/weekly/export")
+def export_weekly_issues(start: date, end: date, actor=Depends(admin), db: DBSession = Depends(get_db)):
+    content = issue_export(db, start, end)
+    filename = quote(f"问题组_{start}_{end}.xlsx")
+    return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"})
 
 
 def document_data(db, document):

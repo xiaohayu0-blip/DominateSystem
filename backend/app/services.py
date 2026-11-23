@@ -267,19 +267,27 @@ def weekly_mail_data(job):
             "sent_at": job.sent_at, "attempts": job.attempts}
 
 
-def week_bounds(day):
+def report_date_bounds(start_day, end_day):
     zone = ZoneInfo("Asia/Shanghai")
-    start_day = day - timedelta(days=day.weekday())
     local = datetime.combine(start_day, time.min, zone)
-    end = local + timedelta(days=7)
+    end = datetime.combine(end_day, time.min, zone)
     return (local.astimezone(timezone.utc).replace(tzinfo=None),
             end.astimezone(timezone.utc).replace(tzinfo=None), local, end)
 
 
+def week_bounds(day):
+    start_day = day - timedelta(days=day.weekday())
+    return report_date_bounds(start_day, start_day + timedelta(days=7))
+
+
+def report_issue_roots():
+    return select(Issue).where(Issue.merged_into.is_(None),
+                               Issue.question_id.not_in(select(EmergencyEvent.question_id)))
+
+
 def weekly(db, day):
     start, end, local, local_end = week_bounds(day)
-    roots = db.scalars(select(Issue).where(Issue.merged_into.is_(None),
-        Issue.question_id.not_in(select(EmergencyEvent.question_id))).order_by(Issue.created_at.desc())).all()
+    roots = db.scalars(report_issue_roots().order_by(Issue.created_at.desc())).all()
     new, backlog = [], []
     for root in roots:
         data = issue_data(db, root)

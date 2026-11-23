@@ -5,7 +5,16 @@ for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 })
     const person = { id: 'fixture-person', role: 'student', name: '体验学生', phone: '13800000000', major: '工商管理', class_name: '体验班', children: [] }
     await page.route('**/api/**', async route => {
-      const path = new URL(route.request().url()).pathname.replace('/api', '')
+      const url = new URL(route.request().url())
+      const path = url.pathname.replace('/api', '')
+      if (path === '/admin/weekly/export') {
+        expect(url.searchParams.get('start')).toBe('2026-11-15')
+        expect(url.searchParams.get('end')).toBe('2026-11-22')
+        return route.fulfill({
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          body: 'mock workbook',
+        })
+      }
       const data: Record<string, unknown> = {
         '/modes': { environment: 'production', max_upload_mb: 20 },
         '/admin/login': { ok: true },
@@ -38,6 +47,16 @@ for (const width of [1440, 390, 320]) {
       await page.locator('.admin-sidebar').getByRole('button', { name: title, exact: true }).click()
       await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
       await expect(page.locator('.loading')).toHaveCount(0)
+      if (title === '后台周报') {
+        await page.getByRole('button', { name: '导出 Excel' }).click()
+        await expect(page.getByLabel('开始日期')).toHaveValue('2026-11-16')
+        await expect(page.getByLabel('结束日期（含当天）')).toHaveValue('2026-11-22')
+        await noOverflow()
+        await page.getByLabel('开始日期').fill('2026-11-15')
+        const download = page.waitForEvent('download')
+        await page.getByRole('button', { name: '下载 Excel' }).click()
+        expect((await download).suggestedFilename()).toBe('问题组_2026-11-15_2026-11-22.xlsx')
+      }
       if (title === '资料维护') {
         await expect(page.getByLabel('选择制度文件')).toBeVisible()
         await expect(page.getByText('管理学院综合测评制度（体验资料）')).toBeVisible()

@@ -5,7 +5,7 @@ export class ApiError extends Error {
     super(message); this.status = status; this.fields = fields
   }
 }
-export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+async function request(path: string, method = 'GET', body?: unknown): Promise<Response> {
   let response: Response
   try {
     response = await fetch('/api' + path, {
@@ -14,15 +14,34 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
       body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
     })
   } catch { throw new ApiError('网络连接失败，输入已保留，请重试。', 0) }
-  const data = await response.json().catch(() => ({}))
   if (!response.ok) {
+    const data = await response.json().catch(() => ({}))
     const fields = Object.fromEntries((data.errors ?? []).map((x: { field: string; message: string }) => [x.field, x.message]))
     const fallback = response.status >= 500
       ? '服务暂时无法连接，请稍后重试。'
       : '操作未完成，请检查输入后重试。'
     throw new ApiError(typeof data.detail === 'string' ? data.detail : fallback, response.status, fields)
   }
-  return data as T
+  return response
+}
+export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const response = await request(path, method, body)
+  return await response.json().catch(() => ({})) as T
+}
+export async function downloadIssueExport(start: string, end: string) {
+  const query = new URLSearchParams({ start, end })
+  const response = await request('/admin/weekly/export?' + query)
+  if (!response.headers.get('Content-Type')?.startsWith('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+    throw new Error('未收到 Excel 文件，请稍后重试。')
+  }
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `问题组_${start}_${end}.xlsx`
+  document.body.append(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 export type Child = { name: string; phone: string; major: string; class_name: string; relationship: string }
 export type Profile = { id?: string; role: 'student' | 'parent'; name: string; phone: string; major: string; class_name: string; children: Child[] }
