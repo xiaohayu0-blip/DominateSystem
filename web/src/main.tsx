@@ -233,7 +233,7 @@ function UserApp() {
     <header className="homepage-header">
       <a className="homepage-brand" href="/">
         <span className="homepage-icon" aria-hidden="true"><OctopusMascot/></span>
-        <div><h1>管小智</h1><span className="homepage-subtitle">管理学院AI助理学工服务平台</span></div>
+        <div><h1>管理学院AI助理学工</h1><span className="homepage-subtitle">制度服务平台</span></div>
       </a>
       <nav aria-label="网站导航"><a className="homepage-nav-link" href="/" aria-current="page">制度咨询</a></nav>
     </header>

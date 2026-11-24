@@ -145,7 +145,7 @@ test('密码与弹出式进度提示 - ' + scenario.name, async ({ page }) => {
     }
   })
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: '管小智', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '管理学院AI助理学工' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.getByRole('button', { name: '注册账号', exact: true }).click()
   await page.getByLabel('本人姓名 *', { exact: true }).fill(profile.name)

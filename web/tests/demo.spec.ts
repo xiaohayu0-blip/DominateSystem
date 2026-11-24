@@ -38,7 +38,7 @@ async function navigate(page: Page, name: string) {
 
 test('桌面登记、制度回答、出处和无依据分项', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: '管小智', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '管理学院AI助理学工' })).toBeVisible()
   await page.screenshot({ path: '../docs/evidence/entry-desktop.png', fullPage: true })
   await registerStudent(page)
   await page.getByRole('textbox', { name: '你的问题' }).fill('2026年度奖学金申请材料？校外住宿补助如何申请？')
