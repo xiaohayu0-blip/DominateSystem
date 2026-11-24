@@ -31,7 +31,7 @@ test('public home and narrow dark-mode chat', async ({ page }) => {
     throw new Error('Unexpected request ' + path)
   })
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: '管理学院AI助理学工' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '管小智', exact: true })).toBeVisible()
   await expect(page.getByRole('main').getByRole('img', { name: '管小智的粉蓝章鱼头像' })).toBeVisible()
   await expect(page.getByRole('link', { name: '管理工作台' })).toHaveCount(0)
   await expect(page.locator('a[href="/admin"], a[href="#/admin"]')).toHaveCount(0)
