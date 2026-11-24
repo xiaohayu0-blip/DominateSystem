@@ -1,3 +1,7 @@
+export function displayAssistantName(text: string): string {
+  return text.replace(/小八(?!爪鱼)/g, '管小智')
+}
+
 export function plainAnswer(text: string): string {
   const literals: string[] = []
   function preserve(value: string) {
@@ -7,7 +11,7 @@ export function plainAnswer(text: string): string {
   const display = text.replace(/\r\n?/g, '\n')
     .replace(/^[ \t]{0,3}(\x60{3,}|~{3,})[^\n]*\n([\s\S]*?)^[ \t]{0,3}\1[ \t]*$/gm, (_, _fence, code: string) => preserve(code.trimEnd()))
     .replace(/\\([\\*\x60_~#>\[\]()!|])/g, (_, literal: string) => preserve(literal))
-    .replace(/(\x60+)(?!\x60)([^\n]+?)\1(?!\x60)/g, (_, _delimiter, code: string) => preserve(code))
+    .replace(/(\x60+)(?!\x60)([^\n]+?)\1(?!\x60)/g, (_, _delimiter, code: string) => preserve(displayAssistantName(code)))
     .replace(/!?\[([^\]\n]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)/g, (_, label: string, url: string) =>
       label === url ? preserve(url) : label + '（' + preserve(url) + '）')
     .replace(/https?:\/\/[^\s<>*\uE000\uE001，。；、）】”]+/g, preserve)
@@ -31,5 +35,5 @@ export function plainAnswer(text: string): string {
       lines[index] = tableCells(lines[index]).join(' · ')
     }
   }
-  return lines.join('\n').replace(/\uE000(\d+)\uE001/g, (match, index: string) => literals[Number(index)] ?? match)
+  return displayAssistantName(lines.join('\n')).replace(/\uE000(\d+)\uE001/g, (match, index: string) => literals[Number(index)] ?? match)
 }

@@ -8,7 +8,7 @@ test('首页在手机和桌面上显示制度范围、章鱼及账号入口', as
     await page.goto('/')
     await expect(page.getByRole('heading', { name: '管理学院AI助理学工' })).toBeVisible()
     await expect(page.getByText(description)).toBeVisible()
-    await expect(page.getByRole('main').getByRole('img', { name: '粉蓝小八爪鱼' })).toBeVisible()
+    await expect(page.getByRole('main').getByRole('img', { name: '管小智的粉蓝章鱼头像' })).toBeVisible()
     const register = page.getByRole('button', { name: '注册账号', exact: true })
     const login = page.getByRole('button', { name: '登录账号', exact: true })
     await expect(register).toBeInViewport()

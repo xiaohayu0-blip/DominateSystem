@@ -5,6 +5,7 @@ test('public home and narrow dark-mode chat', async ({ page }) => {
   const answer = { id: 'answer', status: 'complete', text: question,
     created_at: '2026-11-21T12:00:00', alert: null, answer: { items: [
       { question, status: 'validation_failed', content: '内部说明', citations: [] },
+      { question, status: 'general_answer', content: '**我是**`小八`，头像是小八爪鱼。', citations: [] },
     ] } }
   let loggedIn = false
   await page.setViewportSize({ width: 320, height: 780 })
@@ -31,7 +32,7 @@ test('public home and narrow dark-mode chat', async ({ page }) => {
   })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '管理学院AI助理学工' })).toBeVisible()
-  await expect(page.getByRole('main').getByRole('img', { name: '粉蓝小八爪鱼' })).toBeVisible()
+  await expect(page.getByRole('main').getByRole('img', { name: '管小智的粉蓝章鱼头像' })).toBeVisible()
   await expect(page.getByRole('link', { name: '管理工作台' })).toHaveCount(0)
   await expect(page.locator('a[href="/admin"], a[href="#/admin"]')).toHaveCount(0)
   await expect(page.getByText(/工作台|管理后台/)).toHaveCount(0)
@@ -41,6 +42,8 @@ test('public home and narrow dark-mode chat', async ({ page }) => {
   await page.locator('input[name="username"]').fill('13800000000')
   await page.locator('input[name="password"]').fill('student1234')
   await page.locator('.entry-card').getByRole('button', { name: '登录账号', exact: true }).click()
+  await expect(page.getByText('管小智 · 校园问答')).toBeVisible()
+  await expect(page.getByPlaceholder('想了解什么，问问管小智…')).toBeVisible()
   const emoticon = page.locator('.welcome-emoticon')
   await expect(emoticon).toHaveCSS('white-space', 'nowrap')
   await expect(emoticon).toHaveCSS('display', 'block')
@@ -49,6 +52,8 @@ test('public home and narrow dark-mode chat', async ({ page }) => {
   await page.getByRole('button', { name: question }).click()
   await expect(page.getByRole('textbox', { name: '你的问题' })).toHaveValue(question)
   await page.getByRole('button', { name: '发送问题' }).click()
+  await expect(page.getByText('管小智来答')).toBeVisible()
+  await expect(page.getByText('我是管小智，头像是小八爪鱼。')).toBeVisible()
   await expect(page.getByText(/暂时无法确认准确答案/)).toBeVisible()
   await expect(page.getByText('证据校验失败', { exact: true })).toHaveCount(0)
 })
@@ -93,7 +98,7 @@ test('admin reviews context and changes publication from the workbench', async (
   await page.getByRole('button', { name: '紧急事件', exact: true }).click()
   await page.getByText(event.text, { exact: true }).click()
   await expect(page.getByText('前一轮学生发言')).toBeVisible()
-  await expect(page.getByText('前一轮小八答复')).toBeVisible()
+  await expect(page.getByText('前一轮管小智答复', { exact: false })).toBeVisible()
   await page.getByText('邮件正文预览').click()
   await expect(page.locator('.event-card pre')).toContainText('管理学院危机预警')
   await page.getByLabel('人工核实结论').selectOption('false_alarm')
