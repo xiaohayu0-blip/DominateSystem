@@ -4,5 +4,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: { proxy: { '/api': 'http://127.0.0.1:8000' } },
-  build: { sourcemap: false },
+  build: {
+    sourcemap: false,
+    rollupOptions: { output: { entryFileNames: 'campus-app.js' } },
+  },
 })
