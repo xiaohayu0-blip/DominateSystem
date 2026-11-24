@@ -47,17 +47,18 @@ def test_unsourced_general_information_keeps_model_text(monkeypatch):
     assert item['content'] == '无出处' and not item['citations']
 
 
-@pytest.mark.parametrize('question', ['你是谁', '小八，你叫什么名字？', '你好！'])
+@pytest.mark.parametrize('question', ['你是谁', '管小智，你叫什么名字？', '管小智，你好！', '小八，你叫什么名字？', '你好！'])
 def test_assistant_introduction_uses_model_without_routing_or_search(monkeypatch, question):
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     def unexpected(*args, **kwargs):
         raise AssertionError('简单自我介绍不需要分流或联网')
     monkeypatch.setattr(conversation, 'plan_turn', unexpected)
     monkeypatch.setattr(conversation, 'direct_model_answer', unexpected)
-    answer = conversation.answer_turn(None, question, {})
+    with SessionLocal() as db:
+        answer = conversation.answer_turn(db, question, {})
     item, = answer['items']
     assert item['status'] == 'general_answer'
-    assert '小八' in item['content'] and '(｡•̀ᴗ-)✧' in item['content']
+    assert '管小智' in item['content'] and '(｡•̀ᴗ-)✧' in item['content']
     assert not answer.get('notice')
 
 
@@ -211,13 +212,13 @@ def test_policy_amount_shows_original_model_reply_without_retry(client, monkeypa
 
     def single_reply(_, query, evidence, *, retry=False):
         calls.append(retry)
-        return {'answer': '每人每年600元，休学时停发。' if retry else '小八查到啦，补贴为800元。',
+        return {'answer': '每人每年600元，休学时停发。' if retry else '管小智查到啦，补贴为800元。',
                 'selections': [{'chunk_id': evidence[0]['chunk_id'], 'quote': '模型改写过的摘录'}]}
 
     monkeypatch.setattr(DeepSeekModel, 'select_evidence', single_reply)
     item, = ask(client, '特殊课程补贴有多少钱？')['answer']['items']
     assert calls == [False] and item['status'] == 'answered'
-    assert item['content'] == '小八查到啦，补贴为800元。'
+    assert item['content'] == '管小智查到啦，补贴为800元。'
     assert item['citations'][0]['document_id'] == doc_id
 
 
@@ -228,7 +229,7 @@ def test_explanation_with_a_natural_count_is_not_rejected(client, monkeypatch):
     rule = '申诉可提交申请表与说明函。'
     publish('学生申诉材料办法', rule)
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
-    answer = '小八找到啦，申诉可交两项材料：申请表和说明函 😊'
+    answer = '管小智找到啦，申诉可交两项材料：申请表和说明函 😊'
     calls = []
 
     def single_reply(_, query, evidence, *, retry=False):
