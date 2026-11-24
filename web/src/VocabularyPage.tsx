@@ -70,7 +70,7 @@ export function VocabularyPage({ review = true }: { review?: boolean }) {
   }
   const visible = items.filter(e => (!kind || e.draft.kind === kind) && (!state || e.state === state) && (e.draft.source + e.draft.target).includes(keyword))
   return <div className="vocabulary-page">
-    <section className="panel vocabulary-intro"><div><span className="eyebrow">让日常说法找到正式资料</span><h2>把常用词，交给管小智认识</h2><p>词条只帮助寻找资料，制度答案仍以原文为准。</p></div><ol className="vocabulary-steps"><li>保存草稿</li><li>试搜核对</li><li>提交审核</li><li>管理员发布</li></ol></section>
+    <section className="panel vocabulary-intro"><div><span className="eyebrow">让日常说法找到正式资料</span><h2>把常用词，交给小八认识</h2><p>词条只帮助寻找资料，制度答案仍以原文为准。</p></div><ol className="vocabulary-steps"><li>保存草稿</li><li>试搜核对</li><li>提交审核</li><li>管理员发布</li></ol></section>
     <p className="boundary">草稿不参与学生检索。编辑已发布词条时，旧版本继续生效，直到新版本审核发布。短于两字、数字与条件表达、正则表达式不支持；不同解释请先核对，不自动覆盖。</p>
     {error && <div className="error" role="alert">{error}<button className="text-button" disabled={busy} onClick={() => void run(async () => { await reload(); setNotice('列表已刷新。请核对新版本；编辑区的输入仍保留，可复制后重新选择词条。') })}>刷新列表并保留输入</button></div>}
     {notice && <p className="vocabulary-notice" role="status">{notice}</p>}

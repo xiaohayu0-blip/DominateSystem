@@ -295,7 +295,7 @@ def plan(monkeypatch, tasks):
 
 def test_general_chat_does_not_require_documents(monkeypatch):
     plan(monkeypatch, [{'question': '你好', 'kind': 'general'}])
-    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *args: {'answer': '你好呀，我是管小智 😊'})
+    monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *args: {'answer': '你好呀，我是小八 😊'})
     with SessionLocal() as db:
         answer = chat.answer_turn(db, '你好', {})
     assert answer['items'][0]['status'] == 'general_answer'

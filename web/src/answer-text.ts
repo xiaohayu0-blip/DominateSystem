@@ -1,7 +1,3 @@
-export function displayAssistantName(text: string): string {
-  return text.replace(/小八(?!爪鱼)/g, '管小智')
-}
-
 export function plainAnswer(text: string): string {
   const literals: string[] = []
   function preserve(value: string) {
@@ -35,5 +31,5 @@ export function plainAnswer(text: string): string {
       lines[index] = tableCells(lines[index]).join(' · ')
     }
   }
-  return displayAssistantName(lines.join('\n')).replace(/\uE000(\d+)\uE001/g, (match, index: string) => literals[Number(index)] ?? match)
+  return lines.join('\n').replace(/\uE000(\d+)\uE001/g, (match, index: string) => literals[Number(index)] ?? match)
 }

@@ -117,7 +117,7 @@ export type Emergency = { id: string; question_id: string; text: string; state: 
 export type EventConversation = { complete: boolean; turns: { id: string; text: string; created_at: string; status: string; replies: string[] }[] }
 export type Modes = { environment: string; model: string; material: string; mail: string; embedding?: string }
 export const label: Record<string, string> = {
-  general_answer: '管小智聊聊', web_answer: '联网参考',
+  general_answer: '小八聊聊', web_answer: '联网参考',
   answered: '有据可查', historical_reference: '历史资料参考', missing_material: '待补充资料', needs_clarification: '待澄清', document_conflict: '资料冲突',
   web_unavailable: '联网缺少可靠来源', validation_failed: '证据校验失败', system_error: '技术故障', daily_limit: '今日应用提问次数已达上限', out_of_scope: '服务范围外',
   open: '待处理', in_progress: '处理中', awaiting_material: '待补充资料', awaiting_retest: '待复测', completed: '已解决', dismissed: '无需处理',
