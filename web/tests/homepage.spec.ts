@@ -6,7 +6,8 @@ test('首页在手机和桌面上显示制度范围、章鱼及账号入口', as
   for (const { width, height } of [{ width: 320, height: 568 }, { width: 390, height: 780 }, { width: 1366, height: 900 }]) {
     await page.setViewportSize({ width, height })
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: '管理学院AI助理学工' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '管小智', exact: true })).toBeVisible()
+    await expect(page.getByText('管理学院AI助理学工服务平台', { exact: true })).toBeVisible()
     await expect(page.getByText(description)).toBeVisible()
     await expect(page.getByRole('main').getByRole('img', { name: '管小智的粉蓝章鱼头像' })).toBeVisible()
     const register = page.getByRole('button', { name: '注册账号', exact: true })
