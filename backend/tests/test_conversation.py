@@ -293,6 +293,126 @@ def plan(monkeypatch, tasks):
     monkeypatch.setattr(chat, 'plan_turn', lambda *args: tasks)
 
 
+def test_chat_templates_only_include_answerable_examples(monkeypatch):
+    from test_ranking import source
+
+    plan(monkeypatch, [])
+    monkeypatch.setattr(chat, 'plan_turn', lambda *a: pytest.fail('模板请求不应由模型自由生成'))
+    question = '你会做什么 给我拟订几个提问模板'
+    with SessionLocal() as db:
+        empty, = chat.answer_turn(db, question, {'business_year': 2026})['items']
+        source(db)
+        item, = chat.answer_turn(db, question, {})['items']
+        example = chat.QUESTION_EXAMPLES[1]
+        followup, = chat.answer_turn(db, example, {})['items']
+    assert all(example not in empty['content'] for example in chat.QUESTION_EXAMPLES)
+    assert item['content'].splitlines()[-1] == example
+    assert all(other not in item['content'] for other in (chat.QUESTION_EXAMPLES[0], chat.QUESTION_EXAMPLES[2], '自习'))
+    assert followup['status'] == 'answered' and followup['citations']
+
+
+@pytest.mark.parametrize('question', ['后街美食', '学校哪家店好吃', '食堂有什么好吃的', '推荐个自习的好去处'])
+def test_campus_life_search_bypasses_policy_and_accepts_local_sources(monkeypatch, question):
+    plan(monkeypatch, [{'question': question, 'kind': 'campus', 'clauses': [0]}])
+    monkeypatch.setattr(chat, 'policy_answer', lambda *a: pytest.fail('校园生活查询误走制度检索'))
+    source = {'url': 'https://poi.mapbar.com/wuhan/place', 'title': '地点', 'excerpt': '地点介绍'}
+
+    def search(db, query, **kwargs):
+        assert '武汉纺织大学' in query and question in query
+        assert not kwargs.get('campus_gap')
+        return {'question': query, 'status': 'web_answer', 'content': '已找到公开地点信息。',
+                'citations': [], 'web_sources': [source]}
+
+    monkeypatch.setattr(chat, 'direct_model_answer', search)
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, question, {})['items']
+    assert item['question'] == question and item['web_sources'] == [source]
+
+
+def test_campus_life_falls_back_when_native_search_provides_no_sources(monkeypatch):
+    question = '后街美食'
+    plan(monkeypatch, [{'question': question, 'kind': 'campus_web'}])
+    monkeypatch.setattr(chat, 'direct_model_answer', lambda *a, **kw: {'web_sources': []})
+    source = {'id': 'map', 'url': 'https://poi.mapbar.com/wuhan/place', 'title': '魏记炒饭',
+              'excerpt': '武汉纺织大学阳光校区后街'}
+
+    def search(query):
+        assert query == '武汉纺织大学 后街美食'
+        return [source]
+
+    monkeypatch.setattr(chat, 'search_web', search)
+    monkeypatch.setattr(chat, 'model_json', lambda *a: {'answer': '可以查到魏记炒饭的地址。', 'source_ids': ['map']})
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, question, {})['items']
+    assert item['status'] == 'web_answer' and item['web_sources'] == [source]
+
+
+def test_campus_life_can_use_native_results_when_model_omits_citations(monkeypatch):
+    question = '学校哪家店好吃'
+    plan(monkeypatch, [{'question': question, 'kind': 'campus_web'}])
+    url = 'https://news.wtu.edu.cn/info/1005/64387.htm'
+    monkeypatch.setattr(DeepSeekModel, 'request_web', lambda *a: {
+        'content': '试试食堂。', 'server_tool_calls': [{'calls': [{'status': 'completed',
+            'sources': [{'url': url, 'title': '南湖校区新学生食堂', 'snippet': '一楼开设特色美食档口。'}]}]}],
+    })
+    monkeypatch.setattr(chat, 'search_web', lambda *a: pytest.fail('已有原始搜索结果可供模型选取'))
+
+    def answer_from_sources(db, prompt, payload):
+        source, = payload['untrusted_search_snippets']
+        assert source['url'] == url and source['excerpt'] == '一楼开设特色美食档口。'
+        return {'answer': '南湖校区可以去新学生食堂一楼。', 'source_ids': [source['id']]}
+
+    monkeypatch.setattr(chat, 'model_json', answer_from_sources)
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, question, {})['items']
+    assert item['status'] == 'web_answer' and item['web_sources'][0]['url'] == url
+    assert item['content'] == '南湖校区可以去新学生食堂一楼。'
+
+
+def test_campus_food_procedures_remain_knowledge_first(monkeypatch):
+    question = '学校后街美食摊卫生问题怎么投诉？'
+    plan(monkeypatch, [{'question': question, 'kind': 'campus_web'}])
+    monkeypatch.setattr(chat, 'campus_public_answer', lambda *a: pytest.fail('投诉流程误走餐饮推荐'))
+    cited = {'question': question, 'status': 'answered', 'content': '请向主管部门投诉。', 'citations': []}
+    monkeypatch.setattr(chat, 'policy_answer', lambda *a: {'items': [cited]})
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, question, {})['items']
+    assert item == cited
+
+
+def test_named_person_uses_local_school_context_for_native_web_after_knowledge_gap(monkeypatch):
+    question = '喻学林是谁'
+    plan(monkeypatch, [{'question': question, 'kind': 'campus', 'lookup': 'other', 'clauses': [0]}])
+    calls = []
+    source = {'title': '学院研究生论坛', 'url': 'https://mks.wtu.edu.cn/info/1030/25451.htm',
+              'excerpt': '武汉纺织大学马克思主义学院喻学林教授'}
+
+    def policy(db, query, context):
+        calls.append(('kb', query))
+        return {'items': [{'question': query, 'status': 'missing_material', 'citations': []}]}
+
+    def search(db, query, **kwargs):
+        calls.append(('web', query))
+        return {'status': 'web_answer', 'content': source['excerpt'], 'citations': [], 'web_sources': [source]}
+
+    monkeypatch.setattr(chat, 'policy_answer', policy)
+    monkeypatch.setattr(chat, 'direct_model_answer', search)
+    with SessionLocal() as db:
+        item, = chat.answer_turn(db, question, {})['items']
+    assert calls[0] == ('kb', question)
+    assert calls[1][0] == 'web' and '武汉纺织大学' in calls[1][1] and '喻学林' in calls[1][1]
+    assert item['status'] == 'web_answer' and item['web_sources'] == [source]
+
+
+def test_greeting_varies_the_face_in_recent_conversation():
+    with SessionLocal() as db:
+        first, = chat.answer_turn(db, '你好', {})['items']
+        second, = chat.answer_turn(db, '你好', {
+            'history': [{'role': 'assistant', 'content': first['content']}]})['items']
+    assert first['content'] != second['content']
+    assert '我是管小智' in first['content'] and '我是管小智' in second['content']
+
+
 def test_general_chat_does_not_require_documents(monkeypatch):
     plan(monkeypatch, [{'question': '你好', 'kind': 'general'}])
     monkeypatch.setattr(DeepSeekModel, 'request_json', lambda *args: {'answer': '你好呀，我是管小智 😊'})

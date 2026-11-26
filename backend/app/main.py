@@ -21,7 +21,7 @@ from . import models as m
 from .alerts import HELP_TEXT, alert_mail_body, create_alert, detect_danger, retention_preview
 from .calendar_index import CALENDAR_NOTE, verified_calendar_parts
 from .config import settings
-from .conversation import QUESTION_EXAMPLES, example_answer
+from .conversation import available_examples
 from .db import SessionLocal, get_db, now
 from .issue_export import issue_export
 from .qa import context_for, daily_model_limit
@@ -230,7 +230,7 @@ def logout(request: Request, response: Response, db: DBSession = Depends(get_db)
 
 @app.get("/api/question-examples")
 def question_examples(person=Depends(user), db: DBSession = Depends(get_db)):
-    return [question for question in QUESTION_EXAMPLES if example_answer(db, question)]
+    return available_examples(db)
 
 
 @app.post("/api/questions", status_code=202)

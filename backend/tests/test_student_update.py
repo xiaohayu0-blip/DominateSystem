@@ -48,7 +48,7 @@ def test_unsourced_general_information_keeps_model_text(monkeypatch):
 
 
 @pytest.mark.parametrize('question', ['你是谁', '管小智，你叫什么名字？', '管小智，你好！', '小八，你叫什么名字？', '你好！'])
-def test_assistant_introduction_uses_model_without_routing_or_search(monkeypatch, question):
+def test_assistant_introduction_uses_a_greeting_face_without_routing_or_search(monkeypatch, question):
     monkeypatch.setattr(settings(), 'model_mode', 'deepseek')
     def unexpected(*args, **kwargs):
         raise AssertionError('简单自我介绍不需要分流或联网')
@@ -58,7 +58,8 @@ def test_assistant_introduction_uses_model_without_routing_or_search(monkeypatch
         answer = conversation.answer_turn(db, question, {})
     item, = answer['items']
     assert item['status'] == 'general_answer'
-    assert '管小智' in item['content'] and '(｡•̀ᴗ-)✧' in item['content']
+    assert '管小智' in item['content']
+    assert sum(face in item['content'] for face in conversation.GREETING_FACES) == 1
     assert not answer.get('notice')
 
 
