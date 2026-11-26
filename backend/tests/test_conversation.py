@@ -293,12 +293,16 @@ def plan(monkeypatch, tasks):
     monkeypatch.setattr(chat, 'plan_turn', lambda *args: tasks)
 
 
-def test_chat_templates_only_include_answerable_examples(monkeypatch):
+@pytest.mark.parametrize('question', [
+    '你会做什么 给我拟订几个提问模板',
+    '管小智能做什么？请给我拟订几个向管小智提问的模板。',
+    '你能做什么？给几个可以问你的问题示例。',
+])
+def test_chat_templates_only_include_answerable_examples(monkeypatch, question):
     from test_ranking import source
 
     plan(monkeypatch, [])
     monkeypatch.setattr(chat, 'plan_turn', lambda *a: pytest.fail('模板请求不应由模型自由生成'))
-    question = '你会做什么 给我拟订几个提问模板'
     with SessionLocal() as db:
         empty, = chat.answer_turn(db, question, {'business_year': 2026})['items']
         source(db)
